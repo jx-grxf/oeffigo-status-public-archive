@@ -8,7 +8,6 @@ ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 COPY . .
 RUN corepack enable && pnpm install --frozen-lockfile
 RUN pnpm turbo run build --filter=@openstatus/status-page
-RUN node ops/source-archive.mjs /oeffigo-source.tar.gz
 FROM node:24.18.0-slim
 WORKDIR /app
 ENV NODE_ENV=production SELF_HOST=true NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
@@ -18,7 +17,6 @@ COPY --from=build --chown=node:node /app/packages ./packages
 COPY --from=build --chown=node:node /app/ops ./ops
 COPY --from=build --chown=node:node /app/apps/status-page/.next/static ./apps/status-page/.next/static
 COPY --from=build --chown=node:node /app/apps/status-page/public ./apps/status-page/public
-COPY --from=build --chown=node:node /oeffigo-source.tar.gz /app/oeffigo-source.tar.gz
 USER node
 EXPOSE 3000
 CMD ["node","apps/status-page/server.js"]

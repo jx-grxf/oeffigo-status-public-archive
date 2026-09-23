@@ -2,7 +2,7 @@
 
 This repository publishes versioned source snapshots for the [ÖffiGo Status](https://status.oeffigo.app) website and its administration service. The site is a customized, self-hosted fork of [OpenStatus](https://github.com/openstatusHQ/openstatus), licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
-**Source revision:** `cd9af636cca5268397966b08a172282d180c0610`
+**Source revision:** `1534f9a22be8bf8e35c3d72b5e6e5dc378b37186`
 
 Each snapshot is tagged `source-<private commit SHA>`. The live website links to the tag for its running deployment. The default branch may contain a newer candidate while a deployment is in progress; use the tag linked by the website when you need the corresponding source for the version you are using.
 

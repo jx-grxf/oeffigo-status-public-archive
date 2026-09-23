@@ -71,6 +71,9 @@ export function Footer({
           <a className="hover:text-foreground" href="/api/license">
             {de ? "Lizenz" : "License"}
           </a>
+          <a className="hover:text-foreground" href="/api/source">
+            {de ? "Quellcode" : "Source code"}
+          </a>
         </div>
         <StatusPageFooterActions className="ml-auto group-data-[embed=true]/embed:hidden">
           <TimestampHoverCard
