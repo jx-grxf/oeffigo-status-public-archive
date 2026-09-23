@@ -6,6 +6,7 @@ import { guard, isShipped } from "./source-archive.mjs";
 test("ships the running apps but excludes operator and unrelated code", () => {
   assert.equal(isShipped("apps/status-page/src/app/page.tsx"), true);
   assert.equal(isShipped("apps/dashboard/src/app/page.tsx"), true);
+  assert.equal(isShipped("apps/status-backup/src/backup.mjs"), true);
   for (const path of [
     ".git",
     ".github/workflows/publish-source.yml",

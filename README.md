@@ -1,8 +1,8 @@
 # ÖffiGo Status — Public Source Archive
 
-This repository publishes versioned source snapshots for the [ÖffiGo Status](https://status.oeffigo.app) website and its administration service. The site is a customized, self-hosted fork of [OpenStatus](https://github.com/openstatusHQ/openstatus), licensed under the [GNU Affero General Public License v3.0](LICENSE).
+This repository publishes versioned source snapshots for the [ÖffiGo Status](https://status.oeffigo.app) website, its administration service, and the encrypted backup worker. The site is a customized, self-hosted fork of [OpenStatus](https://github.com/openstatusHQ/openstatus), licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
-**Source revision:** `a0925c99cc083cb20dc00d817a5693dc1fe47464`
+**Source revision:** `21270a6ce3c5b0b25b90e2cb039d972b60eb35f9`
 
 Each snapshot is tagged `source-<private commit SHA>`. The live website links to the tag for its running deployment. The default branch may contain a newer candidate while a deployment is in progress; use the tag linked by the website when you need the corresponding source for the version you are using.
 
@@ -10,6 +10,7 @@ Each snapshot is tagged `source-<private commit SHA>`. The live website links to
 
 - `apps/status-page` — the public status website.
 - `apps/dashboard` — the administration application.
+- `apps/status-backup` — the private database backup worker; no credentials or recovery key are included.
 - `packages` — shared code required by those applications.
 - `ops` — Docker build and bootstrap scripts.
 - Root manifests and lockfiles required to reproduce the builds.
@@ -28,7 +29,7 @@ pnpm --filter @openstatus/status-page exec tsc --noEmit
 pnpm --filter @openstatus/dashboard exec tsc --noEmit
 ```
 
-The two application Dockerfiles are `ops/status-page.Dockerfile` and `ops/dashboard.Dockerfile`. Running a private instance requires your own libSQL database, authentication secrets, and mail configuration. No production credentials are provided here.
+The application Dockerfiles are `ops/status-page.Dockerfile`, `ops/dashboard.Dockerfile`, and `ops/status-backup.Dockerfile`. Running a private instance requires your own libSQL database, authentication secrets, mail configuration, object storage, and encryption identity. No production credentials are provided here.
 
 ## Licensing and attribution
 

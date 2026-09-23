@@ -39,7 +39,7 @@ const TOOLING_DIRS = new Set([
 ]);
 /** Operator notes and hosting setup that only exist at the repository root. */
 const PRIVATE_ROOT = new Set(["Brain", "docs", ".railway", ".stacked.toml"]);
-const SHIPPED_APPS = new Set(["dashboard", "status-page"]);
+const SHIPPED_APPS = new Set(["dashboard", "status-page", "status-backup"]);
 const PRIVATE_FILE =
   /^(?:(?:AGENTS|CLAUDE|GEMINI|CODEX|COPILOT)(?:\.[^/]*)?\.md|\.cursorrules|\.windsurfrules|\.mcp\.json|opencode\.jsonc?|\.env(?:\..*)?|.*\.(?:pem|key|p12|tsbuildinfo|log)|\.DS_Store)$/i;
 
@@ -73,8 +73,10 @@ const REQUIRED = [
   "pnpm-workspace.yaml",
   "apps/status-page/package.json",
   "apps/dashboard/package.json",
+  "apps/status-backup/package.json",
   "ops/status-page.Dockerfile",
   "ops/dashboard.Dockerfile",
+  "ops/status-backup.Dockerfile",
   "ops/source-archive.mjs",
 ];
 
@@ -96,7 +98,7 @@ export function guard(files, read) {
     if (NEVER_PATH.test(path)) problems.push(`private path: ${path}`);
     if (
       path.startsWith("apps/") &&
-      !/^apps\/(?:dashboard|status-page)\//.test(path)
+      !/^apps\/(?:dashboard|status-page|status-backup)\//.test(path)
     )
       problems.push(`unrelated app: ${path}`);
     const content = read(path);
