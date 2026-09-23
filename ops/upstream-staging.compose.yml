@@ -1,0 +1,66 @@
+services:
+  libsql:
+    image: ghcr.io/tursodatabase/libsql-server@sha256:6dd3eb276d9d3604e4a48ac4a999a2e267814732d57d7e94c04ba71482333a67
+    environment:
+      SQLD_NODE: primary
+    healthcheck:
+      test: ["CMD-SHELL", "perl -e 'use IO::Socket::INET; exit(IO::Socket::INET->new(PeerAddr=>\"127.0.0.1:8080\",Timeout=>1) ? 0 : 1);'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - stage-db:/var/lib/sqld
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: ops/dashboard.Dockerfile
+    environment: &stage-env
+      NODE_ENV: production
+      SELF_HOST: "true"
+      NEXT_PUBLIC_SELF_HOST: "true"
+      DATABASE_URL: http://libsql:8080
+      DATABASE_AUTH_TOKEN: ""
+      OWNER_EMAIL: stage@example.invalid
+      AUTH_SECRET: stage-only-placeholder-with-32-characters
+      AUTH_TRUST_HOST: "true"
+      AUTH_URL: http://localhost:3303
+      EMAIL_FROM: Stage <stage@example.invalid>
+      RESEND_API_KEY: stage-disabled
+      CRON_SECRET: stage-disabled
+      OEFFIGO_COLLECTOR: "false"
+      TINYBIRD_NOOP: "true"
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    command: ["sh", "-c", "node ops/bootstrap.mjs && node apps/dashboard/server.js"]
+    depends_on:
+      libsql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    ports:
+      - "127.0.0.1:3303:3000"
+
+  status-page:
+    build:
+      context: ..
+      dockerfile: ops/status-page.Dockerfile
+    environment:
+      <<: *stage-env
+      AUTH_URL: http://localhost:3304
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    ports:
+      - "127.0.0.1:3304:3000"
+
+volumes:
+  stage-db:
