@@ -8,6 +8,7 @@ const request = {
   pageId: 1,
   componentIds: [8],
   turnstileToken: "test-proof",
+  visitor: null,
 };
 
 function dependencies(acceptedAt: Date | null, sent: { count: number }) {

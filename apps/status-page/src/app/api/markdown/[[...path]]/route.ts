@@ -1,3 +1,4 @@
+import { resolveClientIp } from "@openstatus/services/page-access";
 import { cookies, headers } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -12,7 +13,6 @@ import {
   parseMarkdownPath,
 } from "../../../../content/markdown";
 import { getBaseUrl } from "../../../../lib/base-url";
-import { resolveClientIp } from "../../../../lib/http/client-ip";
 import { resolveMarkdownResponse } from "../../../../lib/http/markdown-response";
 import {
   readCombinedStatus,
@@ -72,6 +72,7 @@ export async function GET(
     const source = request.headers.get("x-md-source");
     const queryClient = getQueryClient();
     const url = new URL(request.url);
+    const pw = url.searchParams.get("pw");
     const cookieStore = await cookies();
     const headerStore = await headers();
     const clientIp = resolveClientIp(headerStore);
@@ -95,7 +96,7 @@ export async function GET(
       case "monitors":
       case "events": {
         let page = await queryClient.fetchQuery(
-          trpc.statusPage.get.queryOptions({ slug }),
+          trpc.statusPage.get.queryOptions({ slug, pw }),
         );
         if (!page) return textResponse("Not Found", 404);
         const denied = await denyResponse(page);
@@ -143,6 +144,7 @@ export async function GET(
           (await queryClient.fetchQuery(
             trpc.statusPage.getUptime.queryOptions({
               slug,
+              pw,
               pageComponentIds: page.pageComponents.map((c) => c.id.toString()),
               cardType,
               barType,
@@ -176,7 +178,11 @@ export async function GET(
 
         if (target.kind === "monitor") {
           const monitor = await queryClient.fetchQuery(
-            trpc.statusPage.getMonitor.queryOptions({ slug, id: target.id }),
+            trpc.statusPage.getMonitor.queryOptions({
+              slug,
+              id: target.id,
+              pw,
+            }),
           );
           if (!monitor) return textResponse("Not Found", 404);
           return markdownResponse(
@@ -192,7 +198,7 @@ export async function GET(
         }
         if (target.kind === "report") {
           const report = await queryClient.fetchQuery(
-            trpc.statusPage.getReport.queryOptions({ slug, id: target.id }),
+            trpc.statusPage.getReport.queryOptions({ slug, id: target.id, pw }),
           );
           if (!report) return textResponse("Not Found", 404);
           return markdownResponse(
@@ -207,7 +213,11 @@ export async function GET(
           );
         }
         const maintenance = await queryClient.fetchQuery(
-          trpc.statusPage.getMaintenance.queryOptions({ slug, id: target.id }),
+          trpc.statusPage.getMaintenance.queryOptions({
+            slug,
+            id: target.id,
+            pw,
+          }),
         );
         if (!maintenance) return textResponse("Not Found", 404);
         return markdownResponse(

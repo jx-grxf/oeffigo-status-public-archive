@@ -45,3 +45,15 @@ describe("isIpAllowed", () => {
     expect(isIpAllowed("2001:db8::1", ["2001:db8::/32"])).toBe(true);
   });
 });
+
+describe("isIpAllowed fails closed", () => {
+  test("IPv6 outside range and IPv4-mapped IPv6 are denied", () => {
+    expect(isIpAllowed("2001:db9::7", ["2001:db8::/32"])).toBe(false);
+    expect(isIpAllowed("::ffff:192.0.2.7", ["192.0.2.0/24"])).toBe(false);
+  });
+
+  test("ambiguous or malformed client input is denied", () => {
+    expect(isIpAllowed("012.0.0.1", ["10.0.0.0/8"])).toBe(false);
+    expect(isIpAllowed("192.0.2.7/24", ["192.0.2.0/24"])).toBe(false);
+  });
+});

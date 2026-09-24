@@ -24,12 +24,13 @@ import {
 } from "@openstatus/ui/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@openstatus/ui/components/ui/tabs";
 import { useCookieState } from "@openstatus/ui/hooks/use-cookie-state";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isTRPCClientError } from "@trpc/client";
 import { useRouter } from "next/navigation";
 import { Fragment, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { config as featureGroups, plans } from "@/data/plans";
-import { getStripe } from "@/lib/stripe";
 import { useTRPC } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ export function DataTable({ restrictTo }: { restrictTo?: WorkspacePlan[] }) {
   const [currency] = useCookieState("x-currency", "USD");
   const trpc = useTRPC();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isPending, startTransition] = useTransition();
   const { data: workspace } = useQuery(trpc.workspace.get.queryOptions());
 
@@ -56,8 +58,18 @@ export function DataTable({ restrictTo }: { restrictTo?: WorkspacePlan[] }) {
       onSuccess: async (data) => {
         if (!data) return;
 
-        const stripe = await getStripe();
-        stripe?.redirectToCheckout({ sessionId: data.id });
+        // An existing subscriber has the plan swapped on the subscription they
+        // already have, so there is no checkout to redirect to — only the
+        // refreshed workspace to pick up.
+        if (data.type === "updated") {
+          await queryClient.invalidateQueries({
+            queryKey: trpc.workspace.get.queryKey(),
+          });
+          toast.success("Your plan has been updated");
+          return;
+        }
+
+        if (data.session.url) window.location.assign(data.session.url);
       },
     }),
   );
@@ -141,21 +153,29 @@ export function DataTable({ restrictTo }: { restrictTo?: WorkspacePlan[] }) {
                       variant={id === "starter" ? "default" : "outline"}
                       onClick={() => {
                         startTransition(async () => {
-                          if (id === "free") {
-                            await customerPortalMutation.mutateAsync({
+                          try {
+                            if (id === "free") {
+                              await customerPortalMutation.mutateAsync({
+                                workspaceSlug: workspace.slug,
+                                returnUrl: `${BASE_URL}/settings/billing`,
+                              });
+                              return;
+                            }
+                            await checkoutSessionMutation.mutateAsync({
+                              currency: currency || "USD",
+                              plan: id,
+                              interval,
                               workspaceSlug: workspace.slug,
-                              returnUrl: `${BASE_URL}/settings/billing`,
+                              successUrl: `${BASE_URL}/settings/billing?success=true`,
+                              cancelUrl: `${BASE_URL}/settings/billing`,
                             });
-                            return;
+                          } catch (error) {
+                            toast.error(
+                              isTRPCClientError(error)
+                                ? error.message
+                                : "Failed to update your plan",
+                            );
                           }
-                          await checkoutSessionMutation.mutateAsync({
-                            currency: currency || "USD",
-                            plan: id,
-                            interval,
-                            workspaceSlug: workspace.slug,
-                            successUrl: `${BASE_URL}/settings/billing?success=true`,
-                            cancelUrl: `${BASE_URL}/settings/billing`,
-                          });
                         });
                       }}
                       disabled={isPending || isCurrentPlan}
