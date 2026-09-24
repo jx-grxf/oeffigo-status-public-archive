@@ -57,7 +57,7 @@
     "packageJson": {
       "dependencies": [
         "npm:railway@3.11.0",
-        "npm:turbo@2.9.14"
+        "npm:turbo@2.11.2"
       ]
     },
     "members": {

@@ -1,10 +1,13 @@
 /** @jsxRuntime automatic @jsxImportSource react */
 
-import { Body, Button, Head, Heading, Html, Preview, Text } from "react-email";
+import { Text } from "react-email";
 import { z } from "zod";
 
-import { Layout } from "./_components/layout";
-import { styles } from "./_components/styles";
+import { Actions } from "./_components/actions";
+import { Footer } from "./_components/footer";
+import { Heading } from "./_components/heading";
+import { Layout, statusPageBrand } from "./_components/layout";
+import { colors, styles } from "./_components/styles";
 
 export const PageSubscriptionSchema = z.object({
   page: z.string(),
@@ -20,39 +23,37 @@ export const PageSubscriptionSchema = z.object({
 
 export type PageSubscriptionProps = z.infer<typeof PageSubscriptionSchema>;
 
-const muted = { color: "#6b7280", fontSize: "13px", lineHeight: "20px" };
+const muted = {
+  ...styles.text,
+  color: colors.muted,
+  fontSize: "13px",
+  lineHeight: "20px",
+};
 
 const PageSubscriptionEmail = ({ page, link, img }: PageSubscriptionProps) => {
   const host = URL.canParse(link) ? new URL(link).host : undefined;
   return (
-    <Html lang="de">
-      <Head />
-      <Preview>
-        Ein Klick noch, dann informieren wir dich über Störungen.
-      </Preview>
-      <Body style={styles.main}>
-        <Layout img={img}>
-          <Heading as="h2">Bitte bestätige dein Abo</Heading>
-          <Text>
-            Du hast {host ? `auf ${host} ` : ""}Benachrichtigungen zu Störungen
-            und Wartungen bei {page} angefordert. Bestätige deine
-            E-Mail-Adresse, damit wir dir diese Updates schicken.
-          </Text>
-          <Button style={styles.button} href={link}>
-            Abo bestätigen
-          </Button>
-          <Text style={muted}>
-            Der Link gilt 7 Tage. Wenn du das nicht angefordert hast, ignoriere
-            diese E-Mail. Ohne Bestätigung bekommst du keine weiteren
-            Nachrichten.
-          </Text>
-          <Text style={muted}>
-            English: please confirm your subscription to {page} status updates
-            with the button above.
-          </Text>
-        </Layout>
-      </Body>
-    </Html>
+    <Layout
+      lang="de"
+      preview="Ein Klick noch, dann informieren wir dich über Störungen."
+      brand={statusPageBrand(page, img?.href ?? link, img?.src)}
+      pill={{ tone: "neutral", label: "Bestätigen" }}
+      footer={
+        <Footer reason="Wenn du das nicht angefordert hast, ignoriere diese E-Mail. Ohne Bestätigung bekommst du keine weiteren Nachrichten." />
+      }
+    >
+      <Heading title="Bitte bestätige dein Abo">
+        Du hast {host ? `auf ${host} ` : ""}Benachrichtigungen zu Störungen und
+        Wartungen bei {page} angefordert. Bestätige deine E-Mail-Adresse, damit
+        wir dir diese Updates schicken.
+      </Heading>
+      <Actions primary={{ label: "Abo bestätigen", href: link }} />
+      <Text style={muted}>Der Link gilt 7 Tage.</Text>
+      <Text style={muted}>
+        English: please confirm your subscription to {page} status updates with
+        the button above.
+      </Text>
+    </Layout>
   );
 };
 

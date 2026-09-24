@@ -5,10 +5,15 @@ import { render } from "react-email";
 import { Resend } from "resend";
 
 import FollowUpEmail from "../emails/followup";
+import MonitorAlertEmail, {
+  monitorAlertSubject,
+} from "../emails/monitor-alert";
 import type { MonitorAlertProps } from "../emails/monitor-alert";
 import PageSubscriptionEmail from "../emails/page-subscription";
 import type { PageSubscriptionProps } from "../emails/page-subscription";
-import PrivateLocationAlertEmail from "../emails/private-location-alert";
+import PrivateLocationAlertEmail, {
+  privateLocationAlertSubject,
+} from "../emails/private-location-alert";
 import type { PrivateLocationAlertProps } from "../emails/private-location-alert";
 import SlackFeedbackEmail from "../emails/slack-feedback";
 import StatusPageMagicLinkEmail from "../emails/status-page-magic-link";
@@ -17,7 +22,6 @@ import StatusReportEmail from "../emails/status-report";
 import type { StatusReportProps } from "../emails/status-report";
 import TeamInvitationEmail from "../emails/team-invitation";
 import type { TeamInvitationProps } from "../emails/team-invitation";
-import { monitorAlertEmail } from "../hotfix/monitor-alert";
 import { env } from "./env";
 import {
   resolveEmailFrom,
@@ -34,6 +38,8 @@ export function statusReportSubject(req: {
     return `Geplante Wartung: ${req.reportTitle}`;
   return req.reportTitle;
 }
+
+const SYSTEM_FROM = "openstatus <notifications@notifications.openstatus.dev>";
 
 // Deterministic Resend rejections: retrying the identical request can never
 // succeed (e.g. 409 invalid_idempotent_request when a key is reused with a
@@ -80,7 +86,7 @@ export class EmailClient {
           "Thibault Le Ouay Ducasse <welcome@openstatus.dev>",
         ),
         replyTo: "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
-        subject: "How's it going with OpenStatus?",
+        subject: "How's it going with openstatus?",
         to: req.to,
         html,
       });
@@ -106,7 +112,7 @@ export class EmailClient {
         from: resolveEmailFrom(
           "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
         ),
-        subject: "How's it going with OpenStatus?",
+        subject: "How's it going with openstatus?",
         to: subscriber,
         html,
       })),
@@ -175,7 +181,10 @@ export class EmailClient {
   }
 
   public async sendStatusReportUpdate(
-    req: Omit<StatusReportProps, "unsubscribeUrl" | "manageUrl"> & {
+    req: Omit<
+      StatusReportProps,
+      "unsubscribeUrl" | "manageUrl" | "statusPageUrl"
+    > & {
       subscribers: Array<{ email: string; token: string }>;
       pageSlug: string;
       customDomain?: string | null;
@@ -220,6 +229,7 @@ export class EmailClient {
                 react: (
                   <StatusReportEmail
                     {...req}
+                    statusPageUrl={statusPageBaseUrl}
                     unsubscribeUrl={unsubscribeUrl}
                     manageUrl={manageUrl}
                   />
@@ -255,11 +265,12 @@ export class EmailClient {
       const result = await this.client.emails.send({
         from: resolveEmailFrom(
           `${
-            req.workspaceName ?? "OpenStatus"
+            req.workspaceName || "ÖffiGo Status"
           } <notifications@notifications.openstatus.dev>`,
         ),
+        replyTo: resolveEmailReplyTo(),
         subject: `You've been invited to join ${
-          req.workspaceName ?? "OpenStatus"
+          req.workspaceName || "ÖffiGo Status"
         }`,
         to: req.to,
         html,
@@ -281,13 +292,12 @@ export class EmailClient {
     }
 
     try {
-      // const html = await render(<MonitorAlertEmail {...req} />);
-      const html = monitorAlertEmail(req);
+      const { to: _to, ...props } = req;
+      const html = await render(<MonitorAlertEmail {...props} />);
       const result = await this.client.emails.send({
-        from: resolveEmailFrom(
-          "OpenStatus <notifications@notifications.openstatus.dev>",
-        ),
-        subject: `${req.name}: ${req.type.toUpperCase()}`,
+        from: resolveEmailFrom(SYSTEM_FROM),
+        replyTo: resolveEmailReplyTo(),
+        subject: monitorAlertSubject(props),
         to: req.to,
         html,
       });
@@ -412,6 +422,7 @@ export class EmailClient {
                     date={`${req.from} - ${req.to}`}
                     message={req.message}
                     pageComponents={req.pageComponents}
+                    statusPageUrl={statusPageBaseUrl}
                     unsubscribeUrl={unsubscribeUrl}
                     manageUrl={manageUrl}
                   />
@@ -445,10 +456,7 @@ export class EmailClient {
   ) {
     if (req.to.length === 0) return;
 
-    const subject =
-      req.status === "error"
-        ? `Your private location "${req.locationName}" is unhealthy`
-        : `Your private location "${req.locationName}" is healthy again`;
+    const subject = privateLocationAlertSubject(req);
 
     if (env.NODE_ENV === "development") {
       return;
@@ -460,13 +468,13 @@ export class EmailClient {
           locationName={req.locationName}
           status={req.status}
           lastSeenAt={req.lastSeenAt.toISOString()}
+          monitorCount={req.monitorCount}
         />,
       );
       const result = await this.client.batch.send(
         req.to.map((to) => ({
-          from: resolveEmailFrom(
-            "OpenStatus <notifications@notifications.openstatus.dev>",
-          ),
+          from: resolveEmailFrom(SYSTEM_FROM),
+          replyTo: resolveEmailReplyTo(),
           subject,
           to,
           html,

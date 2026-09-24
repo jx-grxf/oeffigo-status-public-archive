@@ -1,5 +1,6 @@
 import type { IconType } from "@openstatus/icons";
 import {
+  Globe,
   Settings,
   Maintenance,
   Components,
@@ -14,6 +15,7 @@ export const STATUS_PAGE_TABS: {
 }[] = [
   { value: "status-reports", label: "Status Reports", icon: Report },
   { value: "maintenances", label: "Maintenances", icon: Maintenance },
+  { value: "translations", label: "English", icon: Globe },
   { value: "subscribers", label: "Subscribers", icon: Team },
   { value: "components", label: "Components", icon: Components },
   // TODO: hidden in the tabs but still accessible via direct link - can be enabled in the future

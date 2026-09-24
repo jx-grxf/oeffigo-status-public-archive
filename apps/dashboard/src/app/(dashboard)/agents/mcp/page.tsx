@@ -225,6 +225,15 @@ const tools = [
       "get_audit_log",
     ],
   },
+  {
+    group: "Content",
+    items: [
+      "search_docs",
+      "get_doc_page",
+      "search_content",
+      "get_content_page",
+    ],
+  },
 ];
 
 export default function Page() {
@@ -235,8 +244,8 @@ export default function Page() {
           <SectionTitle>MCP Server</SectionTitle>
           <SectionDescription>
             Connect Claude, ChatGPT, Cursor or any Model Context Protocol client
-            to read and manage your status pages, reports and maintenances from
-            a conversation.{" "}
+            to read and manage your status pages, reports and maintenances, and
+            search public openstatus.dev content, from a conversation.{" "}
             <Link href="https://www.openstatus.dev/docs/reference/mcp-server">
               Read more
             </Link>
@@ -287,9 +296,11 @@ export default function Page() {
         </SectionHeader>
         <Note size="sm">
           <Info />
-          Every client you authorize via OAuth shows up under{" "}
-          <strong>Settings &gt; Integrations</strong> as a connected app. Check
-          which apps have access and revoke them at any time.
+          <p>
+            Every client you authorize via OAuth shows up under{" "}
+            <strong>Settings &gt; Integrations</strong> as a connected app.
+            Check which apps have access and revoke them at any time.
+          </p>
           <NoteButton variant="default" asChild>
             <NextLink href="/settings/integrations#connected-apps">
               View connected apps
@@ -334,7 +345,8 @@ export default function Page() {
           <SectionDescription>
             Read tools are available on every credential. Mutation tools require
             read &amp; write access. Audit log tools require the audit-log
-            feature on your plan.
+            feature on your plan. Content tools search public openstatus.dev
+            pages and carry no workspace data.
           </SectionDescription>
         </SectionHeader>
         <ul className="flex flex-col gap-2">

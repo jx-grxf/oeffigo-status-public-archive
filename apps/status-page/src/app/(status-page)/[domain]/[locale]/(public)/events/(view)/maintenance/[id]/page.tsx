@@ -17,7 +17,9 @@ import {
   StatusEventTimelineMaintenance,
   StatusEventTitle,
 } from "../../../../../../../../../components/status-page/status-events";
+import { localizeMaintenance } from "../../../../../../../../../lib/oeffigo/incident-copy";
 import { serviceLabel } from "../../../../../../../../../lib/oeffigo/model";
+import { useEnglishCopy } from "../../../../../../../../../lib/oeffigo/use-english-copy";
 import { useTRPC } from "../../../../../../../../../lib/trpc/client";
 
 export default function MaintenancePage() {
@@ -25,12 +27,16 @@ export default function MaintenancePage() {
   const locale = useLocale();
   const trpc = useTRPC();
   const { id, domain } = useParams<{ id: string; domain: string }>();
-  const { data: maintenance } = useQuery(
+  const { data: source } = useQuery(
     trpc.statusPage.getMaintenance.queryOptions({
       id: Number(id),
       slug: domain,
     }),
   );
+  const englishCopy = useEnglishCopy(domain);
+  const maintenance = source
+    ? localizeMaintenance(source, englishCopy)
+    : undefined;
 
   if (!maintenance) {
     return (
@@ -47,7 +53,7 @@ export default function MaintenancePage() {
         <ButtonBack href="../" />
         <ButtonCopyLink />
       </div>
-      {locale === "en" && domain === "oeffigo" ? (
+      {locale === "en" && domain === "oeffigo" && maintenance.german ? (
         <p className="text-muted-foreground text-sm">
           This maintenance notice is currently published in German.
         </p>
@@ -57,7 +63,11 @@ export default function MaintenancePage() {
           <StatusEventDate date={maintenance.from} />
         </StatusEventAside>
         <StatusEventContent hoverable={false}>
-          <StatusEventTitle lang={domain === "oeffigo" ? "de" : undefined}>
+          <StatusEventTitle
+            lang={
+              domain === "oeffigo" && maintenance.germanTitle ? "de" : undefined
+            }
+          >
             {maintenance.title}
           </StatusEventTitle>
           <StatusEventAffected>

@@ -17,6 +17,9 @@ try {
   await client.execute(
     "CREATE TABLE IF NOT EXISTS oeffigo_check (checked_at TEXT PRIMARY KEY, payload TEXT NOT NULL, api_state TEXT NOT NULL)",
   );
+  await client.execute(
+    "CREATE TABLE IF NOT EXISTS oeffigo_translation (kind TEXT NOT NULL CHECK (kind IN ('report','update','maintenance')), ref_id INTEGER NOT NULL, locale TEXT NOT NULL CHECK (locale = 'en'), title TEXT, message TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY (kind, ref_id, locale))",
+  );
   const owner = (process.env.OWNER_EMAIL || "").trim().toLowerCase();
   if (!owner || !owner.includes("@")) throw new Error("OWNER_EMAIL required");
   const limits = JSON.stringify({

@@ -26,7 +26,12 @@ import {
   StatusEventTitle,
   StatusEventTitleCheck,
 } from "../../../../../../../components/status-page/status-events";
+import {
+  localizeMaintenance,
+  localizeReport,
+} from "../../../../../../../lib/oeffigo/incident-copy";
 import { serviceLabel } from "../../../../../../../lib/oeffigo/model";
+import { useEnglishCopy } from "../../../../../../../lib/oeffigo/use-english-copy";
 import { updatesWithImpactChanges } from "../../../../../../../lib/report-impacts";
 import { useTRPC } from "../../../../../../../lib/trpc/client";
 import { searchParamsParsers } from "./search-params";
@@ -40,10 +45,19 @@ export default function Page() {
   const { data: page } = useQuery(
     trpc.statusPage.get.queryOptions({ slug: domain }),
   );
+  const englishCopy = useEnglishCopy(page?.slug);
 
   if (!page) return null;
 
-  const { statusReports, maintenances } = page;
+  const statusReports = page.statusReports.map((report) =>
+    localizeReport(report, englishCopy),
+  );
+  const maintenances = page.maintenances.map((maintenance) =>
+    localizeMaintenance(maintenance, englishCopy),
+  );
+  const germanCopy = [...statusReports, ...maintenances].some(
+    (event) => event.german,
+  );
 
   return (
     <Tabs
@@ -57,7 +71,7 @@ export default function Page() {
         <TabsTrigger value="reports">{t("Reports")}</TabsTrigger>
         <TabsTrigger value="maintenances">{t("Maintenances")}</TabsTrigger>
       </TabsList>
-      {locale === "en" && page.slug === "oeffigo" ? (
+      {locale === "en" && page.slug === "oeffigo" && germanCopy ? (
         <p className="text-muted-foreground text-sm">
           Incident and maintenance details are currently published in German.
         </p>

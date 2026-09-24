@@ -23,6 +23,10 @@ import { StatusBar } from "../../../../../components/status-page/status-bar";
 import { StatusFeed } from "../../../../../components/status-page/status-feed";
 import { usePathnamePrefix } from "../../../../../hooks/use-pathname-prefix";
 import {
+  localizeMaintenance,
+  localizeReport,
+} from "../../../../../lib/oeffigo/incident-copy";
+import {
   BUCKET_MS,
   expireSnapshot,
   headline,
@@ -36,6 +40,7 @@ import {
   type ServiceState,
   type StatusData,
 } from "../../../../../lib/oeffigo/model";
+import { useEnglishCopy } from "../../../../../lib/oeffigo/use-english-copy";
 import { updatesWithImpactChanges } from "../../../../../lib/report-impacts";
 import { useTRPC } from "../../../../../lib/trpc/client";
 
@@ -192,7 +197,7 @@ const copy = {
     barHint:
       "Each bar is half an hour. Green needs a confirmed check almost every minute.",
     reports: "Reports",
-    reportLanguage: "Incident reports are currently published in German.",
+    reportLanguage: "Some incident details are still published in German.",
     noReports: "No reports or maintenance in the last 7 days.",
     allEvents: "All events",
     updatedAgo: (ago: string) => `updated ${ago}`,
@@ -335,6 +340,14 @@ export function Client() {
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   });
+  const englishCopy = useEnglishCopy(page?.slug);
+  const statusReports =
+    page?.statusReports.map((report) => localizeReport(report, englishCopy)) ??
+    [];
+  const maintenances =
+    page?.maintenances.map((maintenance) =>
+      localizeMaintenance(maintenance, englishCopy),
+    ) ?? [];
   const { data, isError: statusError } = useQuery<StatusData>({
     queryKey: ["oeffigo-status"],
     queryFn: async () => {
@@ -370,18 +383,16 @@ export function Client() {
 
   const openEvents = page?.openEvents.filter((e) => e.type !== "incident");
   const openReport = openEvents?.some((e) => e.type === "report") ?? false;
-  const recentReports =
-    page?.statusReports.filter(
-      (report) =>
-        report.statusReportUpdates.length > 0 &&
-        page.lastEvents.some((e) => e.type === "report" && e.id === report.id),
-    ) ?? [];
-  const recentMaintenances =
-    page?.maintenances.filter((maintenance) =>
-      page.lastEvents.some(
-        (e) => e.type === "maintenance" && e.id === maintenance.id,
-      ),
-    ) ?? [];
+  const recentReports = statusReports.filter(
+    (report) =>
+      report.statusReportUpdates.length > 0 &&
+      page?.lastEvents.some((e) => e.type === "report" && e.id === report.id),
+  );
+  const recentMaintenances = maintenances.filter((maintenance) =>
+    page?.lastEvents.some(
+      (e) => e.type === "maintenance" && e.id === maintenance.id,
+    ),
+  );
 
   const lead = (() => {
     if (statusError) return text.lead.unavailable;
@@ -488,7 +499,7 @@ export function Client() {
               borderColor: `color-mix(in oklab, ${tone} 45%, var(--border))`,
             };
             if (event.type === "report") {
-              const report = page.statusReports.find((r) => r.id === event.id);
+              const report = statusReports.find((r) => r.id === event.id);
               const latest = report?.statusReportUpdates.toSorted(
                 (a, b) => b.date.getTime() - a.date.getTime(),
               )[0];
@@ -543,9 +554,7 @@ export function Client() {
                 </Link>
               );
             }
-            const maintenance = page.maintenances.find(
-              (m) => m.id === event.id,
-            );
+            const maintenance = maintenances.find((m) => m.id === event.id);
             if (!maintenance) return null;
             return (
               <Link
@@ -691,7 +700,7 @@ export function Client() {
           </div>
           {locale === "en" &&
           page?.slug === "oeffigo" &&
-          recentReports.length > 0 ? (
+          [...recentReports, ...recentMaintenances].some((e) => e.german) ? (
             <p className="text-muted-foreground mb-4 text-sm">
               {text.reportLanguage}
             </p>

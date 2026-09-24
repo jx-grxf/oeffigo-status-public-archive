@@ -1,4 +1,5 @@
 import { Events } from "@openstatus/analytics";
+import { ForbiddenError, UnauthorizedError } from "@openstatus/services";
 import {
   SAFE_SUBSCRIPTION_MESSAGES,
   createPageSubscriber,
@@ -14,6 +15,7 @@ import {
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
+import { visitorFromCtx } from "../lib/page-access";
 import { subscribeWithVerification } from "../security/subscribe";
 import { toServiceCtx, toTRPCError } from "../service-adapter";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
@@ -36,6 +38,9 @@ const supportedWebhookUrlSchema = z.url();
 // subscriptions error message only needs adding in one place.
 function throwFromException(error: unknown, fallback: string): never {
   if (error instanceof TRPCError) throw error;
+  if (error instanceof UnauthorizedError || error instanceof ForbiddenError) {
+    toTRPCError(error);
+  }
   console.error("pageSubscriber router error:", error);
   if (error instanceof Error && SAFE_SUBSCRIPTION_MESSAGES.has(error.message)) {
     throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
@@ -63,6 +68,7 @@ export const pageSubscriberRouter = createTRPCRouter({
       subscription: await subscribeWithVerification({
         ...input,
         requestHostname: ctx.req ? new URL(ctx.req.url).hostname : undefined,
+        visitor: visitorFromCtx(ctx),
       }),
     })),
 

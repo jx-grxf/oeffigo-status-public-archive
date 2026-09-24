@@ -5,6 +5,10 @@ import { notFound, unauthorized } from "next/navigation";
 import { auth } from "../../../../../../../lib/auth";
 import { getBaseUrl } from "../../../../../../../lib/base-url";
 import { newestFeedItemsFirst } from "../../../../../../../lib/feed-order";
+import {
+  localizeMaintenance,
+  localizeReport,
+} from "../../../../../../../lib/oeffigo/incident-copy";
 import { getQueryClient, trpc } from "../../../../../../../lib/trpc/server";
 
 export const revalidate = 60;
@@ -45,7 +49,10 @@ export async function GET(
     }
 
     const page = await queryClient.fetchQuery(
-      trpc.statusPage.get.queryOptions({ slug: domain }),
+      trpc.statusPage.get.queryOptions({
+        slug: domain,
+        pw: new URL(_request.url).searchParams.get("pw"),
+      }),
     );
     if (!page) return notFound();
 
@@ -54,14 +61,32 @@ export async function GET(
       customDomain: page.customDomain,
     });
     const localizedBaseUrl = locale === "en" ? `${baseUrl}/en` : baseUrl;
-    const germanIncidentCopy = page.slug === "oeffigo";
+    const oeffigoEnglish = page.slug === "oeffigo" && locale === "en";
+    const englishCopy = oeffigoEnglish
+      ? await queryClient.fetchQuery(
+          trpc.statusTranslation.published.queryOptions({
+            slug: domain,
+            pw: new URL(_request.url).searchParams.get("pw"),
+          }),
+        )
+      : null;
+    const statusReports = (page.statusReports ?? []).map((report) =>
+      localizeReport(report, englishCopy),
+    );
+    const maintenances = (page.maintenances ?? []).map((maintenance) =>
+      localizeMaintenance(maintenance, englishCopy),
+    );
+    const germanIncidentCopy =
+      page.slug === "oeffigo" &&
+      (locale !== "en" ||
+        [...statusReports, ...maintenances].some((event) => event.german));
 
     const feed = new Feed({
       id: `${localizedBaseUrl}/feed/${type}`,
       title: page.title,
       description:
         germanIncidentCopy && locale === "en"
-          ? "ÖffiGo status updates. Incident details are currently published in German."
+          ? "ÖffiGo status updates. Some incident details are still published in German."
           : page.description,
       generator: `${page.title} Status`,
       feedLinks: {
@@ -83,7 +108,7 @@ export async function GET(
       ttl: 60,
     });
 
-    for (const maintenance of page.maintenances ?? []) {
+    for (const maintenance of maintenances) {
       const maintenanceUrl = `${localizedBaseUrl}/events/maintenance/${maintenance.id}`;
       feed.addItem({
         id: maintenanceUrl,
@@ -94,7 +119,7 @@ export async function GET(
       });
     }
 
-    for (const statusReport of page.statusReports ?? []) {
+    for (const statusReport of statusReports) {
       const statusReportUrl = `${localizedBaseUrl}/events/report/${statusReport.id}`;
       const status = statusLabel(statusReport.status);
       const statusReportUpdates = (statusReport.statusReportUpdates ?? [])

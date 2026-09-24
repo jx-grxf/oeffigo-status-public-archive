@@ -18,7 +18,9 @@ import {
   StatusEventTitle,
   StatusEventTitleCheck,
 } from "../../../../../../../../../components/status-page/status-events";
+import { localizeReport } from "../../../../../../../../../lib/oeffigo/incident-copy";
 import { serviceLabel } from "../../../../../../../../../lib/oeffigo/model";
+import { useEnglishCopy } from "../../../../../../../../../lib/oeffigo/use-english-copy";
 import { updatesWithImpactChanges } from "../../../../../../../../../lib/report-impacts";
 import { useTRPC } from "../../../../../../../../../lib/trpc/client";
 
@@ -27,9 +29,11 @@ export default function ReportPage() {
   const locale = useLocale();
   const trpc = useTRPC();
   const { id, domain } = useParams<{ id: string; domain: string }>();
-  const { data: report } = useQuery(
+  const { data: source } = useQuery(
     trpc.statusPage.getReport.queryOptions({ id: Number(id), slug: domain }),
   );
+  const englishCopy = useEnglishCopy(domain);
+  const report = source ? localizeReport(source, englishCopy) : undefined;
 
   if (!report) {
     return (
@@ -58,7 +62,7 @@ export default function ReportPage() {
         <ButtonBack href="../" />
         <ButtonCopyLink />
       </div>
-      {locale === "en" && domain === "oeffigo" ? (
+      {locale === "en" && domain === "oeffigo" && report.german ? (
         <p className="text-muted-foreground text-sm">
           This incident is currently published in German.
         </p>
@@ -72,7 +76,7 @@ export default function ReportPage() {
         <StatusEventContent hoverable={false}>
           <StatusEventTitle
             className="inline-flex gap-1"
-            lang={domain === "oeffigo" ? "de" : undefined}
+            lang={domain === "oeffigo" && report.germanTitle ? "de" : undefined}
           >
             {report.title}
             {isReportResolvedOnly ? <StatusEventTitleCheck /> : null}

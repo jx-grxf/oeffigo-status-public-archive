@@ -19,6 +19,7 @@ import { pageSubscriberRouter } from "./router/pageSubscriber";
 import { privateLocationRouter } from "./router/privateLocation";
 import { statusPageRouter } from "./router/statusPage";
 import { statusReportRouter } from "./router/statusReport";
+import { statusTranslationRouter } from "./router/statusTranslation";
 import { tinybirdRouter } from "./router/tinybird";
 import { userRouter } from "./router/user";
 import { workspaceRouter } from "./router/workspace";
@@ -31,6 +32,7 @@ export const edgeRouter = createTRPCRouter({
   page: pageRouter,
   pageComponent: pageComponentRouter,
   statusReport: statusReportRouter,
+  statusTranslation: statusTranslationRouter,
   domain: domainRouter,
   externalService: externalServiceRouter,
   user: userRouter,

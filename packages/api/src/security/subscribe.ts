@@ -1,3 +1,4 @@
+import type { PageVisitor } from "@openstatus/services/page-access";
 import { upsertSelfSignupSubscriber } from "@openstatus/services/page-subscriber";
 import { getChannel } from "@openstatus/subscriptions";
 import { TRPCError } from "@trpc/server";
@@ -19,6 +20,7 @@ export async function subscribeWithVerification(
     componentIds?: number[];
     turnstileToken?: string;
     requestHostname?: string;
+    visitor: PageVisitor | null;
   },
   dependencies = defaultDependencies,
 ) {
@@ -29,8 +31,10 @@ export async function subscribeWithVerification(
       requestHostname: args.requestHostname,
     });
     await dependencies.claimMailCooldown("subscribe", args.email);
+    const { visitor, ...input } = args;
     const subscription = await dependencies.upsertSelfSignupSubscriber({
-      input: args,
+      input,
+      visitor,
     });
     if (subscription.acceptedAt) return { requestReceived: true };
     if (!subscription.token || !subscription.customDomain)

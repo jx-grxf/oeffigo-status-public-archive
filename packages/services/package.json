@@ -9,6 +9,10 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts"
     },
+    "./status-translation": {
+      "import": "./src/status-translation/index.ts",
+      "types": "./src/status-translation/index.ts"
+    },
     "./status-report": {
       "import": "./src/status-report/index.ts",
       "types": "./src/status-report/index.ts"
@@ -113,6 +117,14 @@
       "import": "./src/private-location/index.ts",
       "types": "./src/private-location/index.ts"
     },
+    "./page-access": {
+      "import": "./src/page-access/index.ts",
+      "types": "./src/page-access/index.ts"
+    },
+    "./page-access/cookie-key": {
+      "import": "./src/page-access/cookie-key.ts",
+      "types": "./src/page-access/cookie-key.ts"
+    },
     "./page-subscriber": {
       "import": "./src/page-subscriber/index.ts",
       "types": "./src/page-subscriber/index.ts"
@@ -159,6 +171,7 @@
     "@openstatus/utils": "workspace:*",
     "@workos-inc/node": "catalog:",
     "effect": "catalog:",
+    "ip-address": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
