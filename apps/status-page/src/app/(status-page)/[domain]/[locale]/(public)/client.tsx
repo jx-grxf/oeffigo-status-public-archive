@@ -26,6 +26,7 @@ import {
   BUCKET_MS,
   expireSnapshot,
   headline,
+  historyBucketLabel,
   MAX_AGE_MS,
   mergeManualStatus,
   serviceLabel,
@@ -55,6 +56,11 @@ const copy = {
       sparse_data: "Zu wenig aktuelle Daten",
       in_development: "In Entwicklung",
     },
+    scope: {
+      positions_paused: "Fahrzeugpositionen werden derzeit nicht angezeigt.",
+      wien_only: "Die Meldungsliste deckt derzeit nur Wien ab.",
+    },
+    scopeMore: "Mehr in den Meldungen",
     and: "und",
     headline: {
       operational: () => "Alle Funktionen verfügbar",
@@ -102,6 +108,7 @@ const copy = {
     barHint:
       "Ein Balken ist eine halbe Stunde. Grün braucht fast jede Minute eine bestätigte Prüfung.",
     reports: "Meldungen",
+    reportLanguage: "",
     noReports: "In den letzten 7 Tagen gab es keine Meldungen oder Wartungen.",
     allEvents: "Alle Ereignisse",
     updatedAgo: (ago: string) => `aktualisiert ${ago}`,
@@ -136,6 +143,11 @@ const copy = {
       sparse_data: "Not enough recent data",
       in_development: "In development",
     },
+    scope: {
+      positions_paused: "Vehicle positions are not shown at the moment.",
+      wien_only: "The alerts list currently covers Vienna only.",
+    },
+    scopeMore: "Read the reports",
     and: "and",
     headline: {
       operational: () => "All services available",
@@ -180,6 +192,7 @@ const copy = {
     barHint:
       "Each bar is half an hour. Green needs a confirmed check almost every minute.",
     reports: "Reports",
+    reportLanguage: "Incident reports are currently published in German.",
     noReports: "No reports or maintenance in the last 7 days.",
     allEvents: "All events",
     updatedAgo: (ago: string) => `updated ${ago}`,
@@ -227,7 +240,13 @@ const bucketStates = [
   "unknown",
 ] as const satisfies readonly ServiceState[];
 
-const legend = ["operational", "degraded", "down", "unknown"] as const;
+const legend = [
+  "operational",
+  "degraded",
+  "down",
+  "paused",
+  "unknown",
+] as const;
 
 function barStatus(state: ServiceState): StatusType {
   switch (state) {
@@ -609,6 +628,17 @@ export function Client() {
                         ? service.description
                         : service.descriptionEn}
                     </p>
+                    {service.scope ? (
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        {text.scope[service.scope]}{" "}
+                        <Link
+                          href={eventsHref}
+                          className="underline underline-offset-2"
+                        >
+                          {text.scopeMore}
+                        </Link>
+                      </p>
+                    ) : null}
                   </div>
                   <StateLabel
                     className="md:hidden"
@@ -659,6 +689,13 @@ export function Client() {
               {text.allEvents}
             </Link>
           </div>
+          {locale === "en" &&
+          page?.slug === "oeffigo" &&
+          recentReports.length > 0 ? (
+            <p className="text-muted-foreground mb-4 text-sm">
+              {text.reportLanguage}
+            </p>
+          ) : null}
           {!page ? (
             <Skeleton className="h-24 w-full" />
           ) : recentReports.length === 0 && recentMaintenances.length === 0 ? (
@@ -797,8 +834,9 @@ function ServiceHistory({
   const text = copy[locale];
   const bars = useMemo<StatusBarData[] | undefined>(
     () =>
-      buckets?.map((bucket) => ({
+      buckets?.map((bucket, index) => ({
         day: bucket.start,
+        ariaLabel: historyBucketLabel(locale, index, bucket),
         bar: [{ status: barStatus(bucket.state), height: 100 }],
         card:
           bucket.checks === 0
@@ -811,7 +849,7 @@ function ServiceHistory({
                 })),
         events: [],
       })),
-    [buckets, text],
+    [buckets, locale, text],
   );
   if (!bars) return <Skeleton className="h-8 w-full" />;
   return (

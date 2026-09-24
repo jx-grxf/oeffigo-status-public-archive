@@ -57,6 +57,11 @@ export default function Page() {
         <TabsTrigger value="reports">{t("Reports")}</TabsTrigger>
         <TabsTrigger value="maintenances">{t("Maintenances")}</TabsTrigger>
       </TabsList>
+      {locale === "en" && page.slug === "oeffigo" ? (
+        <p className="text-muted-foreground text-sm">
+          Incident and maintenance details are currently published in German.
+        </p>
+      ) : null}
       <TabsContent value="reports">
         <StatusEventGroup>
           {statusReports.length > 0 ? (

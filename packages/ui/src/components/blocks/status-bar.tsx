@@ -523,7 +523,7 @@ const StatusBarItem = forwardRef<HTMLDivElement, StatusBarItemProps>(
             onKeyDown={(e) => handlers.onKeyDown(e, index)}
             tabIndex={isLastItem && !isActive ? 0 : isActive ? 0 : -1}
             role="button"
-            aria-label={labels.ariaDayStatus(index + 1)}
+            aria-label={item.ariaLabel ?? labels.ariaDayStatus(index + 1)}
             aria-pressed={isPinned}
             aria-expanded={isActive}
             data-slot="status-bar-item"

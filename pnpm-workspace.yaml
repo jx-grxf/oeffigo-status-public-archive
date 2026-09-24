@@ -20,8 +20,25 @@ allowBuilds:
   sharp: true
 overrides:
   "@auth/core@<0.41.3": 0.41.3
+  "axios@>=1.0.0 <1.18.0": 1.18.0
+  "brace-expansion@>=5.0.0 <5.0.9": 5.0.9
+  "browserslist@<4.28.7": 4.28.7
+  "engine.io@>=6.0.0 <6.6.7": 6.6.7
+  "fast-uri@>=3.0.0 <3.1.6": 3.1.6
+  "form-data@>=4.0.0 <4.0.6": 4.0.6
   "hono@<4.13.5": 4.13.5
+  "ip-address@>=10.0.0 <10.3.1": 10.3.1
+  "lodash@<4.17.24": 4.18.1
+  "nanoid@>=3.0.0 <3.3.18": 3.3.18
+  "picomatch@>=2.0.0 <2.3.2": 2.3.2
+  "picomatch@>=4.0.0 <4.0.4": 4.0.4
+  "postcss@>=8.0.0 <8.5.18": 8.5.18
   "protobufjs@<7.5.5": 7.5.5
+  "sharp@>=0.35.0 <0.35.4": 0.35.4
+  "socket.io-parser@>=4.0.0 <4.2.7": 4.2.7
+  "undici@>=6.0.0 <6.27.0": 6.27.0
+  "undici@>=7.0.0 <7.29.0": 7.29.0
+  "ws@>=8.0.0 <8.21.0": 8.21.0
 autoInstallPeers: true
 # `turbo` is deliberately pinned literally in package.json rather than listed
 # here: Vercel can't read a version through `catalog:`, and on failing to infer
@@ -134,7 +151,7 @@ catalog:
   "@unkey/api": 2.3.4
   "@upstash/qstash": 2.11.0
   "@upstash/redis": 1.38.0
-  "@vercel/blob": 0.23.4
+  "@vercel/blob": 2.8.0
   "@workos-inc/node": 10.8.0
   ai: 6.0.188
   astro: 5.18.1
@@ -155,13 +172,13 @@ catalog:
   gray-matter: 4.0.3
   hono: 4.13.5
   hono-rate-limiter: 0.4.2
-  ip-cidr: 4.0.2
+  ip-address: 10.3.1
   isomorphic-dompurify: 3.14.0
   jsonpath-plus: 10.4.0
   knip: 5.88.1
   limiter: 3.0.0
   lucide-react: 0.525.0
-  nanoid: 5.1.11
+  nanoid: 5.1.16
   nanoid-dictionary: 5.0.0
   next: 16.3.3
   next-auth: 5.0.0-beta.32
@@ -176,7 +193,7 @@ catalog:
   oxlint-tsgolint: 0.23.0
   percentile: 1.6.0
   playwright: 1.60.0
-  postcss: 8.5.15
+  postcss: 8.5.18
   qr-code-styling: 1.9.2
   radix-ui: 1.4.3
   random-word-slugs: 0.1.7
@@ -198,7 +215,7 @@ catalog:
   sanitize-html: 2.17.4
   schema-dts: 1.1.5
   shadcn: 3.8.5
-  sharp: 0.33.5
+  sharp: 0.35.4
   shiki: 3.23.0
   slugify: 1.6.9
   sonner: 2.0.7

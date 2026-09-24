@@ -5,30 +5,37 @@ import { TRPCError } from "@trpc/server";
 import { claimMailCooldown, MailCooldownError } from "./mail-cooldown";
 import { verifyTurnstile, TurnstileError } from "./turnstile";
 
-export async function subscribeWithVerification(args: {
-  email: string;
-  pageId: number;
-  componentIds?: number[];
-  turnstileToken?: string;
-  requestHostname?: string;
-}) {
+const defaultDependencies = {
+  verifyTurnstile,
+  claimMailCooldown,
+  upsertSelfSignupSubscriber,
+  getChannel,
+};
+
+export async function subscribeWithVerification(
+  args: {
+    email: string;
+    pageId: number;
+    componentIds?: number[];
+    turnstileToken?: string;
+    requestHostname?: string;
+  },
+  dependencies = defaultDependencies,
+) {
   try {
-    await verifyTurnstile({
+    await dependencies.verifyTurnstile({
       token: args.turnstileToken,
       action: "status-subscribe",
       requestHostname: args.requestHostname,
     });
-    await claimMailCooldown("subscribe", args.email);
-    const subscription = await upsertSelfSignupSubscriber({ input: args });
-    if (subscription.acceptedAt)
-      return {
-        id: subscription.id,
-        acceptedAt: subscription.acceptedAt,
-        componentIds: subscription.componentIds,
-      };
+    await dependencies.claimMailCooldown("subscribe", args.email);
+    const subscription = await dependencies.upsertSelfSignupSubscriber({
+      input: args,
+    });
+    if (subscription.acceptedAt) return { requestReceived: true };
     if (!subscription.token || !subscription.customDomain)
       throw new Error("Subscription is unavailable");
-    const channel = getChannel("email");
+    const channel = dependencies.getChannel("email");
     if (!channel?.sendVerification)
       throw new Error("Email channel unavailable");
     await channel.sendVerification(
@@ -41,11 +48,7 @@ export async function subscribeWithVerification(args: {
       },
       `https://${subscription.customDomain}/verify/${subscription.token}`,
     );
-    return {
-      id: subscription.id,
-      acceptedAt: null,
-      componentIds: subscription.componentIds,
-    };
+    return { requestReceived: true };
   } catch (error) {
     if (error instanceof TurnstileError)
       throw new TRPCError({ code: "FORBIDDEN", message: error.message });

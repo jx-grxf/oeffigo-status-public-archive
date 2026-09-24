@@ -115,10 +115,12 @@ export const reportSchema = z.object({
 });
 /** Why a neutral reading is neutral; never attached to a confirmed state. */
 export type ServiceNote = "no_demand" | "sparse_data" | "in_development";
+export type ServiceScope = "positions_paused" | "wien_only";
 export type ServiceReading = {
   id: string;
   state: ServiceState;
   note?: ServiceNote;
+  scope?: ServiceScope;
 };
 export type Snapshot = {
   checkedAt: string;
@@ -194,6 +196,16 @@ export function projectReport(
               : "unknown";
       state = worst([state, deliveryState]);
     }
+    if (
+      service.id === "positions" &&
+      components.get("vehicle_positions") === "paused"
+    )
+      return { id: service.id, state, scope: "positions_paused" };
+    if (
+      service.id === "alerts" &&
+      components.get("disruption_search") === "degraded"
+    )
+      return { id: service.id, state, scope: "wien_only" };
     return { id: service.id, state };
   });
   return {
@@ -295,6 +307,7 @@ export function mergeManualStatus(
         (impact === "unknown" && measured === "paused")
           ? reading?.note
           : undefined,
+      scope: impact === "down" ? undefined : reading?.scope,
     };
   });
   return {
@@ -340,6 +353,43 @@ export type HistoryBucket = {
   counts: StateCounts;
   state: ServiceState;
 };
+
+const historyStateLabels = {
+  de: {
+    operational: "Verfügbar",
+    degraded: "Eingeschränkt",
+    down: "Unterbrochen",
+    paused: "Pausiert",
+    unknown: "Nicht bestätigt",
+  },
+  en: {
+    operational: "Available",
+    degraded: "Degraded",
+    down: "Outage",
+    paused: "Paused",
+    unknown: "Unconfirmed",
+  },
+} as const;
+
+export function historyBucketLabel(
+  locale: "de" | "en",
+  index: number,
+  bucket: HistoryBucket,
+) {
+  const start = Date.parse(bucket.start);
+  const format = new Intl.DateTimeFormat(locale === "de" ? "de-AT" : "en-GB", {
+    timeZone: "Europe/Vienna",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const slot =
+    locale === "de"
+      ? `Halbstunde ${index + 1} von 48`
+      : `Half hour ${index + 1} of 48`;
+  return `${slot}, ${format.format(start)}–${format.format(start + BUCKET_MS)} Europe/Vienna: ${historyStateLabels[locale][bucket.state]}`;
+}
 
 /** Green needs nearly every minute confirmed; any confirmed failure shows. */
 export function bucketState(

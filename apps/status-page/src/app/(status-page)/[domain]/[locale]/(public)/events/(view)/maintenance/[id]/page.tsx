@@ -47,12 +47,19 @@ export default function MaintenancePage() {
         <ButtonBack href="../" />
         <ButtonCopyLink />
       </div>
+      {locale === "en" && domain === "oeffigo" ? (
+        <p className="text-muted-foreground text-sm">
+          This maintenance notice is currently published in German.
+        </p>
+      ) : null}
       <StatusEvent>
         <StatusEventAside>
           <StatusEventDate date={maintenance.from} />
         </StatusEventAside>
         <StatusEventContent hoverable={false}>
-          <StatusEventTitle>{maintenance.title}</StatusEventTitle>
+          <StatusEventTitle lang={domain === "oeffigo" ? "de" : undefined}>
+            {maintenance.title}
+          </StatusEventTitle>
           <StatusEventAffected>
             {maintenance.maintenancesToPageComponents.map((affected) => (
               <StatusEventAffectedBadge key={affected.pageComponent.id}>

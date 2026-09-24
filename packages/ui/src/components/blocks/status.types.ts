@@ -47,6 +47,7 @@ export type StatusEventData =
 
 export type StatusBarData = {
   day: string;
+  ariaLabel?: string;
   bar: {
     status: StatusType;
     // NOTE: is in percentage! should sum up to 100%

@@ -187,9 +187,35 @@ test("a resting component pauses its own function and leaves the map green", () 
   const snapshot = projectReport(raw, "operational", "operational", now, 100);
   const state = (id) => snapshot.services.find((s) => s.id === id)?.state;
   assert.equal(state("positions"), "paused");
+  assert.equal(
+    snapshot.services.find((s) => s.id === "positions")?.scope,
+    "positions_paused",
+  );
   // Stops, search and surroundings are unaffected: green there is the truth.
   assert.equal(state("map"), "operational");
   assert.equal(headline(snapshot.services), "no_known_issues");
+});
+test("a confirmed Vienna-only alerts list keeps its scope note through a manual incident", () => {
+  const raw = report();
+  raw.components = raw.components.map((component) =>
+    component.id === "disruption_search"
+      ? { ...component, status: "degraded" }
+      : component,
+  );
+  const snapshot = projectReport(raw, "operational", "operational", now, 100);
+  const trackers = [
+    { type: "component", component: { id: 4, status: "degraded" } },
+  ];
+  const merged = mergeManualStatus(snapshot, trackers, now);
+  assert.equal(
+    merged.services.find((service) => service.id === "alerts")?.scope,
+    "wien_only",
+  );
+  const expired = mergeManualStatus(snapshot, trackers, now + MAX_AGE_MS + 1);
+  assert.equal(
+    expired.services.find((service) => service.id === "alerts")?.scope,
+    undefined,
+  );
 });
 test("history buckets need confirmed minutes for green and show any confirmed failure", () => {
   const at = Date.parse("2026-09-09T12:10:00Z");

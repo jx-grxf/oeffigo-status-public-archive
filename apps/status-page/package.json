@@ -53,7 +53,7 @@
     "cmdk": "catalog:",
     "date-fns": "catalog:",
     "feed": "catalog:",
-    "ip-cidr": "catalog:",
+    "ip-address": "catalog:",
     "lucide-react": "catalog:",
     "next": "catalog:",
     "next-auth": "catalog:",

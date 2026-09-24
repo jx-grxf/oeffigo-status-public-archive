@@ -58,6 +58,11 @@ export default function ReportPage() {
         <ButtonBack href="../" />
         <ButtonCopyLink />
       </div>
+      {locale === "en" && domain === "oeffigo" ? (
+        <p className="text-muted-foreground text-sm">
+          This incident is currently published in German.
+        </p>
+      ) : null}
       <StatusEvent>
         <StatusEventAside>
           <StatusEventDate
@@ -65,7 +70,10 @@ export default function ReportPage() {
           />
         </StatusEventAside>
         <StatusEventContent hoverable={false}>
-          <StatusEventTitle className="inline-flex gap-1">
+          <StatusEventTitle
+            className="inline-flex gap-1"
+            lang={domain === "oeffigo" ? "de" : undefined}
+          >
             {report.title}
             {isReportResolvedOnly ? <StatusEventTitleCheck /> : null}
           </StatusEventTitle>
