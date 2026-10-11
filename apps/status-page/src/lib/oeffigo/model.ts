@@ -9,7 +9,7 @@ export const stateSchema = z.enum([
 ]);
 export type ServiceState = z.infer<typeof stateSchema>;
 /**
- * Die acht Funktionen dieser Seite.
+ * Die neun Funktionen dieser Seite.
  *
  * Der Server spiegelt diese Liste (ohne „Website", über die er nichts bezeugen
  * kann) in `server/src/status/public-services.ts` im Repo `Routiq` — die
@@ -89,6 +89,16 @@ export const services = [
     description: "Ausgewertete Ankünfte und Abfahrten im Rückblick.",
     descriptionEn: "Recorded arrivals and departures over time.",
     required: ["api", "database", "official_history"],
+  },
+  {
+    id: "assistants",
+    componentId: 9,
+    de: "Assistenten (MCP)",
+    en: "Assistants (MCP)",
+    description: "ÖffiGo in ChatGPT, Claude und anderen Assistenten.",
+    descriptionEn: "ÖffiGo in ChatGPT, Claude and other assistants.",
+    // Die Komponente `mcp` meldet `paused`, solange die Schnittstelle aus ist.
+    required: ["api", "api_router", "mcp"],
   },
   {
     id: "website",

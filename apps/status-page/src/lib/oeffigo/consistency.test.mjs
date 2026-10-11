@@ -22,6 +22,7 @@ const report = () => ({
     "predictions",
     "disruption_search",
     "vehicle_positions",
+    "mcp",
   ].map((id) => ({ id, status: "operational" })),
   predictionDelivery: {
     state: "healthy",
