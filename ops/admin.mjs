@@ -7,7 +7,7 @@
 //
 // Without an explicit flag a call with input is a mutation and a call without
 // input is a query — the two tRPC verbs the dashboard itself uses.
-const DEFAULT_URL = "https://status-admin.oeffigo.app";
+export const DEFAULT_URL = "https://status-admin.oeffigo.app";
 // Cloudflare turns away obvious scripts; this is the same client the app is.
 const USER_AGENT = "OeffiGo-Ops/1.0";
 
@@ -75,15 +75,10 @@ export function readResult(status, body) {
   return data ?? null;
 }
 
-async function main() {
-  const parsed = parseArgs(process.argv.slice(2));
-  if (parsed.error) usage(parsed.error);
-  const token = process.env.OPS_TOKEN?.trim();
-  if (!token) usage("OPS_TOKEN is not set");
-  const { url, init } = buildRequest({
-    baseUrl: process.env.OPS_URL?.trim() || DEFAULT_URL,
-    ...parsed,
-  });
+/** One call against the dashboard API as the owner. Errors never carry the
+ * request: its headers hold the token. */
+export async function call({ procedure, input, kind, token, baseUrl = DEFAULT_URL }) {
+  const { url, init } = buildRequest({ baseUrl, procedure, input, kind });
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -101,7 +96,20 @@ async function main() {
   } catch {
     throw new Error(`HTTP ${response.status}: unexpected response`);
   }
-  console.log(JSON.stringify(readResult(response.status, body), null, 2));
+  return readResult(response.status, body);
+}
+
+async function main() {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.error) usage(parsed.error);
+  const token = process.env.OPS_TOKEN?.trim();
+  if (!token) usage("OPS_TOKEN is not set");
+  const result = await call({
+    ...parsed,
+    token,
+    baseUrl: process.env.OPS_URL?.trim() || DEFAULT_URL,
+  });
+  console.log(JSON.stringify(result, null, 2));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`)

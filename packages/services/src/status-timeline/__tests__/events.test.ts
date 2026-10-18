@@ -1,3 +1,7 @@
+import type {
+  PageComponent,
+  StatusReportUpdate,
+} from "@openstatus/db/src/schema";
 import { expect } from "@std/expect";
 import { describe, test } from "@std/testing/bdd";
 import { FakeTime } from "@std/testing/time";
@@ -289,6 +293,96 @@ describe("activeReportStatus", () => {
         makeEvent({ type: "incident", to: null, status: "error" }),
       ]),
     ).toBeUndefined();
+  });
+});
+
+describe("getEvents monitoring reports", () => {
+  // safe because getEvents only reads the component id from this relation
+  const component = (id: number) => ({ id }) as PageComponent;
+  const report = (
+    updates: {
+      status: StatusReportUpdate["status"];
+      at: string;
+      impact?: ImpactInterval["impact"];
+    }[],
+  ) => ({
+    id: 6,
+    status: updates[updates.length - 1].status,
+    title: "Report",
+    workspaceId: 1,
+    pageId: 1,
+    createdAt: new Date(updates[0].at),
+    updatedAt: new Date(updates[0].at),
+    statusReportsToPageComponents: [{ pageComponent: component(6) }],
+    statusReportUpdates: updates.map((update, id) => ({
+      id,
+      status: update.status,
+      date: new Date(update.at),
+      message: "",
+      statusReportId: 6,
+      createdAt: new Date(update.at),
+      updatedAt: new Date(update.at),
+      statusReportUpdateToPageComponents: update.impact
+        ? [{ pageComponentId: 6, impact: update.impact }]
+        : [],
+    })),
+  });
+
+  const eventFor = (reports: ReturnType<typeof report>[]) =>
+    getEvents({
+      maintenances: [],
+      incidents: [],
+      reports,
+      pageComponentId: 6,
+      componentType: "static",
+    }).find((event) => event.type === "report");
+
+  test("monitoring with a remaining impact keeps the report open", () => {
+    const event = eventFor([
+      report([
+        {
+          status: "identified",
+          at: "2026-10-17T22:39:00Z",
+          impact: "degraded_performance",
+        },
+        {
+          status: "monitoring",
+          at: "2026-10-18T14:22:00Z",
+          impact: "degraded_performance",
+        },
+      ]),
+    ]);
+    expect(event?.to).toBeNull();
+    expect(activeReportStatus(event ? [event] : [])).toBe("degraded");
+  });
+
+  test("monitoring with all impacts cleared ends the report", () => {
+    const event = eventFor([
+      report([
+        {
+          status: "identified",
+          at: "2026-10-17T22:39:00Z",
+          impact: "major_outage",
+        },
+        {
+          status: "monitoring",
+          at: "2026-10-18T14:22:00Z",
+          impact: "operational",
+        },
+      ]),
+    ]);
+    expect(event?.to).toEqual(new Date("2026-10-18T14:22:00Z"));
+    expect(activeReportStatus(event ? [event] : [])).toBeUndefined();
+  });
+
+  test("a legacy report without impact rows still ends at monitoring", () => {
+    const event = eventFor([
+      report([
+        { status: "investigating", at: "2026-10-17T22:39:00Z" },
+        { status: "monitoring", at: "2026-10-18T14:22:00Z" },
+      ]),
+    ]);
+    expect(event?.to).toEqual(new Date("2026-10-18T14:22:00Z"));
   });
 });
 

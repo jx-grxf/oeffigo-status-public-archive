@@ -1,3 +1,8 @@
+// The VPS deploy passes the built commit as a build argument; Railway set its own.
+export function sourceRevision() {
+  return process.env.SOURCE_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA;
+}
+
 export function sourceUrl(
   repo: string | undefined,
   revision: string | undefined,

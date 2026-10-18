@@ -12,10 +12,8 @@ import {
   formatDateRange,
   formatDateRangeParts,
   formatDateTime,
-} from "../../lib/formatter";
-
-// Status-page timestamps render in UTC; the suffix tells viewers which zone.
-const withUTC = (value: string) => `${value} (UTC)`;
+  withZone,
+} from "../../lib/oeffigo/vienna-time";
 
 /**
  * StatusBlocksProvider
@@ -116,17 +114,14 @@ export function StatusBlocksProvider({
       durationAcross: (duration: string) =>
         t("across {duration}", { duration }),
 
-      formatDate: (d: Date) => withUTC(formatDate(d, { locale })),
+      formatDate: (d: Date) => formatDate(d, { locale }),
       formatDateShort: (d: Date) => formatDate(d, { month: "short", locale }),
-      formatDateTime: (d: Date) => withUTC(formatDateTime(d, locale)),
-      formatDateRange: (from?: Date, to?: Date) => {
-        const range = formatDateRange(from, to, locale);
-        return from || to ? withUTC(range) : range;
-      },
-      formatDateRangeParts: (from: Date, to: Date) => {
-        const { from: start, to: end } = formatDateRangeParts(from, to, locale);
-        return { from: start, to: withUTC(end) };
-      },
+      formatDateTime: (d: Date) =>
+        withZone(formatDateTime(d, locale), d, locale),
+      formatDateRange: (from?: Date, to?: Date) =>
+        formatDateRange(from, to, locale),
+      formatDateRangeParts: (from: Date, to: Date) =>
+        formatDateRangeParts(from, to, locale),
     }),
     [t, locale],
   );

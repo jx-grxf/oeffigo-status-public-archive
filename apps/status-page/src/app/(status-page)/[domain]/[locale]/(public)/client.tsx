@@ -41,6 +41,7 @@ import {
   type StatusData,
 } from "../../../../../lib/oeffigo/model";
 import { useEnglishCopy } from "../../../../../lib/oeffigo/use-english-copy";
+import { formatDateRange } from "../../../../../lib/oeffigo/vienna-time";
 import { updatesWithImpactChanges } from "../../../../../lib/report-impacts";
 import { useTRPC } from "../../../../../lib/trpc/client";
 
@@ -119,6 +120,7 @@ const copy = {
     updatedAgo: (ago: string) => `aktualisiert ${ago}`,
     readReport: "Meldung öffnen",
     maintenanceNow: "Wartung läuft",
+    maintenanceUpcoming: "Geplante Wartung",
     subscribeTitle: "Bei Störungen Bescheid bekommen",
     subscribeText:
       "Du bekommst eine E-Mail, wenn wir über Störungen oder Wartungen informieren. Abmelden kannst du jederzeit über den Link in der E-Mail.",
@@ -203,6 +205,7 @@ const copy = {
     updatedAgo: (ago: string) => `updated ${ago}`,
     readReport: "Open report",
     maintenanceNow: "Maintenance in progress",
+    maintenanceUpcoming: "Scheduled maintenance",
     subscribeTitle: "Get notified about incidents",
     subscribeText:
       "We email you when we publish an incident or maintenance update. Every email has a link to unsubscribe.",
@@ -252,6 +255,9 @@ const legend = [
   "paused",
   "unknown",
 ] as const;
+
+// Announced work shows up top a week ahead instead of below the past reports.
+const UPCOMING_MAINTENANCE_MS = 7 * 24 * 60 * 60_000;
 
 function barStatus(state: ServiceState): StatusType {
   switch (state) {
@@ -383,6 +389,15 @@ export function Client() {
 
   const openEvents = page?.openEvents.filter((e) => e.type !== "incident");
   const openReport = openEvents?.some((e) => e.type === "report") ?? false;
+  const upcomingMaintenances = now
+    ? maintenances
+        .filter(
+          (m) =>
+            m.from.getTime() > now &&
+            m.from.getTime() - now <= UPCOMING_MAINTENANCE_MS,
+        )
+        .toSorted((a, b) => a.from.getTime() - b.from.getTime())
+    : [];
   const recentReports = statusReports.filter(
     (report) =>
       report.statusReportUpdates.length > 0 &&
@@ -588,6 +603,28 @@ export function Client() {
               </Link>
             );
           })}
+        </section>
+      ) : null}
+
+      {upcomingMaintenances.length > 0 ? (
+        <section className="grid gap-3">
+          {upcomingMaintenances.map((maintenance) => (
+            <Link
+              key={`upcoming-${maintenance.id}`}
+              variant="unstyled"
+              href={`${eventsHref}/maintenance/${maintenance.id}`}
+              className="bg-card hover:bg-accent/40 group flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border px-5 py-4 transition-colors sm:px-6"
+            >
+              <span className="text-info flex items-center gap-2 text-sm font-medium">
+                <span className="bg-info size-2 rounded-full" />
+                {text.maintenanceUpcoming}
+              </span>
+              <span className="font-medium">{maintenance.title}</span>
+              <span className="text-muted-foreground text-sm sm:ml-auto">
+                {formatDateRange(maintenance.from, maintenance.to, locale)}
+              </span>
+            </Link>
+          ))}
         </section>
       ) : null}
 

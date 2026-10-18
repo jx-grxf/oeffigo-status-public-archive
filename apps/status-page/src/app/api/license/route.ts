@@ -1,4 +1,4 @@
-import { sourceUrl } from "../../../lib/source-url";
+import { sourceRevision, sourceUrl } from "../../../lib/source-url";
 
 export const dynamic = "force-dynamic";
 
@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const source = sourceUrl(
     process.env.PUBLIC_SOURCE_REPO_URL,
-    process.env.RAILWAY_GIT_COMMIT_SHA,
+    sourceRevision(),
   );
   if (!source)
     return new Response("Source temporarily unavailable", {

@@ -43,9 +43,10 @@ function required(env, name) {
 
 export function backupConfig(env) {
   const host = required(env, "LIBSQL_HOST");
-  if (!/^[a-z0-9-]+\.railway\.internal$/.test(host)) {
+  // Railway private domain or a single-label Docker service name on the VPS; neither resolves publicly.
+  if (!/^[a-z0-9-]+(\.railway\.internal)?$/.test(host)) {
     if (env.BACKUP_ALLOW_LOCAL !== "true" || host !== "127.0.0.1") {
-      throw new Error("LIBSQL_HOST must be a Railway private host");
+      throw new Error("LIBSQL_HOST must be a private host");
     }
   }
   const accountId = required(env, "R2_ACCOUNT_ID");

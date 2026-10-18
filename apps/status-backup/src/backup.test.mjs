@@ -29,8 +29,19 @@ test("accepts a complete SQL transaction and rejects a truncated dump", async ()
 test("rejects a public dump target", () => {
   assert.throws(
     () => backupConfig({ LIBSQL_HOST: "example.com" }),
-    /Railway private host/,
+    /private host/,
   );
+});
+
+test("accepts a Docker service name as private host", () => {
+  assert.match(backupConfig({
+    LIBSQL_HOST: "libsql",
+    R2_ACCOUNT_ID: "1349b9bcf830550abff69b2fd71e3b32",
+    AGE_RECIPIENT: "age1hwtkxyeaa9us4r2m8n4v3xcgzdh6vrph4cw2dqaqukvjk3tzmp3qnkaqsx",
+    R2_BUCKET: "b",
+    R2_ACCESS_KEY_ID: "k",
+    R2_SECRET_ACCESS_KEY: "s",
+  }).url, /^http:\/\/libsql:8080\//);
 });
 
 test("uses UTC and a unique suffix in the encrypted object key", () => {

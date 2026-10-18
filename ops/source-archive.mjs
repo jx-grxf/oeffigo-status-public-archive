@@ -39,13 +39,15 @@ const TOOLING_DIRS = new Set([
 ]);
 /** Operator notes and hosting setup that only exist at the repository root. */
 const PRIVATE_ROOT = new Set(["Brain", "docs", ".railway", ".stacked.toml"]);
+/** Local operator tooling: not part of either app, and it names password-manager items. */
+const OPERATOR_FILES = new Set(["ops/mcp.mjs", "ops/mcp-launch.sh"]);
 const SHIPPED_APPS = new Set(["dashboard", "status-page", "status-backup"]);
 const PRIVATE_FILE =
   /^(?:(?:AGENTS|CLAUDE|GEMINI|CODEX|COPILOT)(?:\.[^/]*)?\.md|\.cursorrules|\.windsurfrules|\.mcp\.json|opencode\.jsonc?|\.env(?:\..*)?|.*\.(?:pem|key|p12|tsbuildinfo|log)|\.DS_Store)$/i;
 
 export function isShipped(path) {
   const parts = path.split("/");
-  if (PRIVATE_ROOT.has(parts[0])) return false;
+  if (PRIVATE_ROOT.has(parts[0]) || OPERATOR_FILES.has(path)) return false;
   if (parts[0] === "apps" && parts[1] !== "_" && !SHIPPED_APPS.has(parts[1]))
     return false;
   if (parts[0] === ".git") return false;

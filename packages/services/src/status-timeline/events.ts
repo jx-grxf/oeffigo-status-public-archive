@@ -389,11 +389,6 @@ export function getEvents({
         return;
       }
 
-      const to =
-        lastUpdate?.status === "resolved" || lastUpdate?.status === "monitoring"
-          ? lastUpdate?.date
-          : null;
-
       // derived from the open (current) impacts; legacy stays flat orange.
       // No open non-operational interval — including the empty-projection
       // case (component never named by any update) — reads "success" BY
@@ -402,6 +397,17 @@ export function getEvents({
       const openImpacts = (impactIntervals ?? [])
         .filter((iv) => iv.to === null)
         .map((iv) => iv.impact);
+
+      // ÖffiGo: "monitoring" ends the event only once its impacts are cleared.
+      // An update that says "monitoring, degraded" must keep the component
+      // degraded instead of turning it green with a known problem still open.
+      const stillImpacted =
+        hasImpacts && openImpacts.some((impact) => impact !== "operational");
+      const to =
+        lastUpdate?.status === "resolved" ||
+        (lastUpdate?.status === "monitoring" && !stillImpacted)
+          ? lastUpdate?.date
+          : null;
       const status = hasImpacts
         ? impactToStatusType(worstImpact(openImpacts))
         : ("degraded" as const);

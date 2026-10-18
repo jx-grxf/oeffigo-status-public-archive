@@ -1,0 +1,78 @@
+# oeffigo-status on the VPS. jg-deploy rebuilds on push to main and runs the dashboard
+# bootstrap first, like Railway's preDeploy. Secrets live in /srv/oeffigo-status/env, never here.
+# libsql sits on an internal network without internet; only the two apps and the backup job reach it.
+name: oeffigo-status
+services:
+  libsql:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    restart: unless-stopped
+    environment:
+      SQLD_HTTP_LISTEN_ADDR: 0.0.0.0:8080
+      SQLD_NODE: primary
+    volumes:
+      - /srv/oeffigo-status/libsql:/var/lib/sqld
+    networks: [db]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: ops/dashboard.Dockerfile
+      args:
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:?}
+        # jg-deploy exports the checked-out commit; /api/source links its public tag.
+        SOURCE_COMMIT_SHA: ${SOURCE_COMMIT_SHA:-}
+    image: oeffigo-status-dashboard:latest
+    restart: unless-stopped
+    env_file: /srv/oeffigo-status/env/dashboard.env
+    depends_on: [libsql]
+    networks: [db, app, edge-status]
+    mem_limit: 768m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck: &health
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  status-page:
+    build:
+      context: ../..
+      dockerfile: ops/status-page.Dockerfile
+      args:
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:?}
+        # jg-deploy exports the checked-out commit; /api/source links its public tag.
+        SOURCE_COMMIT_SHA: ${SOURCE_COMMIT_SHA:-}
+    image: oeffigo-status-page:latest
+    restart: unless-stopped
+    env_file: /srv/oeffigo-status/env/status-page.env
+    depends_on: [libsql]
+    networks: [db, app, edge-status]
+    mem_limit: 768m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck: *health
+
+  # Nightly encrypted dump to R2, started by status-backup.timer (00:17 UTC), not by `up`.
+  status-backup:
+    build:
+      context: ../..
+      dockerfile: ops/status-backup.Dockerfile
+    image: oeffigo-status-backup:latest
+    profiles: [cron]
+    env_file: /srv/oeffigo-status/env/status-backup.env
+    networks: [db, app]
+    mem_limit: 256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+networks:
+  db:
+    internal: true
+  app: {}
+  edge-status:
+    name: edge-status
+    external: true

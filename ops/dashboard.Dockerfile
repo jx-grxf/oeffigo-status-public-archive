@@ -17,6 +17,8 @@ COPY --from=build --chown=node:node /app/packages ./packages
 COPY --from=build --chown=node:node /app/ops ./ops
 COPY --from=build --chown=node:node /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
 COPY --from=build --chown=node:node /app/apps/dashboard/public ./apps/dashboard/public
+ARG SOURCE_COMMIT_SHA
+ENV SOURCE_COMMIT_SHA=$SOURCE_COMMIT_SHA
 USER node
 EXPOSE 3000
 CMD ["node","apps/dashboard/server.js"]

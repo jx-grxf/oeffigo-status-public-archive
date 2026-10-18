@@ -16,6 +16,8 @@ test("ships the running apps but excludes operator and unrelated code", () => {
     "apps/web/src/content/pages/blog/post.mdx",
     "apps/server/src/index.ts",
     "apps/status-page/.env.production",
+    "ops/mcp.mjs",
+    "ops/mcp-launch.sh",
   ]) {
     assert.equal(isShipped(path), false, path);
   }
