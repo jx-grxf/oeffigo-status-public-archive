@@ -21,16 +21,6 @@ services:
     cap_drop: [ALL]
     cap_add: [CHOWN, SETUID, SETGID]
     security_opt: [no-new-privileges:true]
-    # The image has neither curl nor wget; bash's /dev/tcp reaches sqld's /health.
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.0\\r\\nHost: libsql\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
-      interval: 30s
-      timeout: 5s
-      start_period: 20s
-      retries: 3
-    # Other projects share this host and spike CPU (desk at 150 % on 21.10.); under
-    # contention the measuring path gets twice the default weight. No hard cap.
-    cpu_shares: 2048
 
   dashboard:
     build:
@@ -72,10 +62,6 @@ services:
     networks: [db, app, edge-status]
     mem_limit: 768m
     mem_reservation: 192m
-    # The collector and alerting live here: first in line for CPU, last for the OOM killer
-    # (a build OOM on 20.10. froze one collector run for 73 s).
-    cpu_shares: 2048
-    oom_score_adj: -300
     pids_limit: 512
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
