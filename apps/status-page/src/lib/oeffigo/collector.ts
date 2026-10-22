@@ -1,10 +1,9 @@
 import { createClient } from "@libsql/client";
 
 import { processAlerts } from "./alert-delivery";
+import { type Range, ranges } from "./availability";
 import {
-  buildHistory,
   expireSnapshot,
-  historyWindowStart,
   newerReport,
   projectReport,
   type ServiceState,
@@ -12,6 +11,7 @@ import {
   type StatusData,
 } from "./model";
 import { probe } from "./probe";
+import { readRange, refreshSlots } from "./slots";
 
 function database() {
   return createClient({
@@ -92,6 +92,11 @@ export async function collect() {
       databaseFailures += 1;
       console.error("ÖffiGo status sample could not be persisted");
     }
+    try {
+      await refreshSlots(client, now);
+    } catch {
+      console.error("ÖffiGo availability slots could not be updated");
+    }
     // Alerts still run when the sample could not be stored; that is one of the signals.
     try {
       await processAlerts(client, {
@@ -119,20 +124,66 @@ export function startCollector() {
     } catch {
       console.error("ÖffiGo status check failed");
     }
+    warmHistories();
     setTimeout(tick, 60_000).unref();
   };
   void tick();
 }
-let cached: { at: number; data: StatusData } | undefined;
-let inFlight: Promise<StatusData> | undefined;
-export async function readStatus(): Promise<StatusData> {
-  if (cached && Date.now() - cached.at < 15_000)
-    return { ...cached.data, snapshot: expireSnapshot(cached.data.snapshot) };
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
+// The history of a range changes by one bucket at most per tick, but computing 90 days took
+// 4 s on this host, and with a 15 s cache every switch of the range picker paid it again.
+// A history is served at once while it is younger than HISTORY_STALE_MS and recomputed behind
+// the response once it is older than its fresh window. The snapshot (one row) is always read.
+const HISTORY_FRESH_MS: Record<Range, number> = {
+  "24h": 30_000,
+  "7d": 120_000,
+  "30d": 300_000,
+  "90d": 300_000,
+};
+const HISTORY_STALE_MS = 30 * 60_000;
+const histories = new Map<Range, { at: number; history: StatusData["history"] }>();
+const historyLoads = new Map<Range, Promise<StatusData["history"]>>();
+
+function loadHistory(range: Range): Promise<StatusData["history"]> {
+  const pending = historyLoads.get(range);
+  if (pending) return pending;
+  const load = (async () => {
     const client = database();
     const now = Date.now();
-    const windowStart = historyWindowStart(now);
+    try {
+      const history = await readRange(client, range, now);
+      histories.set(range, { at: now, history });
+      return history;
+    } finally {
+      client.close();
+    }
+  })().finally(() => historyLoads.delete(range));
+  historyLoads.set(range, load);
+  return load;
+}
+
+async function historyFor(range: Range): Promise<StatusData["history"]> {
+  const hit = histories.get(range);
+  const age = hit ? Date.now() - hit.at : Number.POSITIVE_INFINITY;
+  if (hit && age < HISTORY_STALE_MS) {
+    if (age >= HISTORY_FRESH_MS[range]) void loadHistory(range).catch(() => {});
+    return hit.history;
+  }
+  return loadHistory(range);
+}
+
+/** Keeps every range warm so the picker never waits; called by the collector. */
+export function warmHistories() {
+  for (const range of ranges) void historyFor(range).catch(() => {});
+}
+
+let snapshotLoad: Promise<Snapshot> | null = null;
+let snapshotCache: { at: number; snapshot: Snapshot } | null = null;
+
+async function latestSnapshot(): Promise<Snapshot> {
+  if (snapshotCache && Date.now() - snapshotCache.at < 5_000) return snapshotCache.snapshot;
+  snapshotLoad ??= (async () => {
+    const client = database();
+    const now = Date.now();
     try {
       const latest = await client.execute(
         "SELECT payload FROM oeffigo_check ORDER BY checked_at DESC LIMIT 1",
@@ -140,38 +191,16 @@ export async function readStatus(): Promise<StatusData> {
       const snapshot: Snapshot = latest.rows[0]
         ? JSON.parse(String(latest.rows[0].payload))
         : projectReport(null, "unknown", "unknown", now, null);
-      const counts = await client.execute({
-        // json_each has its own `id` column, so group by position, not alias.
-        sql: `SELECT (CAST(strftime('%s', c.checked_at) AS INTEGER) - CAST(? AS INTEGER)) / 1800 AS bucket,
-                json_extract(s.value, '$.id') AS service,
-                json_extract(s.value, '$.state') AS state,
-                COUNT(*) AS n
-              FROM oeffigo_check AS c, json_each(c.payload, '$.services') AS s
-              WHERE c.checked_at >= ?
-              GROUP BY 1, 2, 3`,
-        args: [windowStart / 1000, new Date(windowStart).toISOString()],
-      });
-      const data: StatusData = {
-        snapshot: expireSnapshot(snapshot, now),
-        history: buildHistory(
-          counts.rows.map((row) => ({
-            bucket: Number(row.bucket),
-            id: String(row.service),
-            state: String(row.state),
-            n: Number(row.n),
-          })),
-          now,
-        ),
-      };
-      cached = { at: now, data };
-      return data;
+      snapshotCache = { at: now, snapshot };
+      return snapshot;
     } finally {
       client.close();
     }
-  })();
-  try {
-    return await inFlight;
-  } finally {
-    inFlight = undefined;
-  }
+  })().finally(() => { snapshotLoad = null; });
+  return snapshotLoad;
+}
+
+export async function readStatus(range: Range = "24h"): Promise<StatusData> {
+  const [snapshot, history] = await Promise.all([latestSnapshot(), historyFor(range)]);
+  return { snapshot: expireSnapshot(snapshot), history };
 }

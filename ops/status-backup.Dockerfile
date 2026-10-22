@@ -1,4 +1,4 @@
-FROM node:24.22.1-slim AS age
+FROM node:24.22.0-slim AS age
 ARG TARGETARCH=amd64
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
@@ -12,14 +12,14 @@ RUN set -eu; \
     tar -xzf /tmp/age.tar.gz -C /tmp; \
     install -m 755 /tmp/age/age /usr/local/bin/age
 
-FROM node:24.22.1-slim AS build
+FROM node:24.22.0-slim AS build
 WORKDIR /app
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
 COPY . .
 RUN corepack enable && pnpm install --frozen-lockfile
 RUN node --test apps/status-backup/src/*.test.mjs
 
-FROM node:24.22.1-slim
+FROM node:24.22.0-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=age /usr/local/bin/age /usr/local/bin/age

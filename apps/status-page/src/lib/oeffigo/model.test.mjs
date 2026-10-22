@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  BUCKET_COUNT,
-  buildHistory,
   expireSnapshot,
   headline,
   MAX_AGE_MS,
@@ -217,29 +215,6 @@ test("a confirmed Vienna-only alerts list keeps its scope note through a manual 
     expired.services.find((service) => service.id === "alerts")?.scope,
     undefined,
   );
-});
-test("history buckets need confirmed minutes for green and show any confirmed failure", () => {
-  const at = Date.parse("2026-09-09T12:10:00Z");
-  const rows = [
-    { bucket: 46, id: "departures", state: "operational", n: 26 },
-    { bucket: 46, id: "departures", state: "unknown", n: 4 },
-    { bucket: 45, id: "departures", state: "operational", n: 25 },
-    { bucket: 44, id: "departures", state: "operational", n: 29 },
-    { bucket: 44, id: "departures", state: "down", n: 1 },
-    { bucket: 47, id: "departures", state: "operational", n: 8 },
-    { bucket: 47, id: "website", state: "bogus", n: 8 },
-  ];
-  const history = buildHistory(rows, at);
-  const departures = history.departures;
-  assert.equal(departures.length, BUCKET_COUNT);
-  assert.equal(departures[47].start, "2026-09-09T12:00:00.000Z");
-  assert.equal(departures[46].state, "operational");
-  assert.equal(departures[46].checks, 30);
-  assert.equal(departures[45].state, "unknown");
-  assert.equal(departures[44].state, "down");
-  assert.equal(departures[47].state, "operational");
-  assert.equal(departures[0].state, "unknown");
-  assert.equal(history.website[47].checks, 0);
 });
 test("the headline names confirmed problems first and tolerates explained neutrals only", () => {
   const ok = { state: "operational", maintenance: false };

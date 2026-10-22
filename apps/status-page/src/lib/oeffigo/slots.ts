@@ -1,0 +1,216 @@
+import type { Client } from "@libsql/client";
+
+import {
+  buildRange,
+  countMinutes,
+  type Impact,
+  levels,
+  type ManualInterval,
+  manualIntervals,
+  minuteLevels,
+  type MinuteCounts,
+  type Range,
+  type RangeHistory,
+  SLOT_MS,
+} from "./availability";
+import { services, type Snapshot } from "./model";
+
+const ids = services.map((s) => s.id);
+const serviceOfComponent = new Map<number, string>(
+  services.map((s) => [s.componentId, s.id]),
+);
+// Look past the slot edges so a confirmed outage can reach back into the previous slot.
+const EDGE_MS = 6 * 60_000;
+const DAY_MS = 86_400_000;
+
+async function readManual(client: Client, now: number) {
+  const rows = await client.execute(
+    `SELECT u.status_report_id AS report, u.id, u.date, u.status,
+            i.page_component_id AS component, i.impact
+       FROM status_report_update AS u
+       LEFT JOIN status_report_update_to_page_component AS i
+         ON i.status_report_update_id = u.id`,
+  );
+  const reports = new Map<
+    number,
+    {
+      resolvedAt: number | null;
+      updates: Map<
+        number,
+        {
+          id: number;
+          date: number;
+          impacts: { componentId: number; impact: Impact }[];
+        }
+      >;
+    }
+  >();
+  for (const row of rows.rows) {
+    const reportId = Number(row.report);
+    const date = Number(row.date) * 1000;
+    const report = reports.get(reportId) ?? {
+      resolvedAt: null,
+      updates: new Map(),
+    };
+    reports.set(reportId, report);
+    if (row.status === "resolved")
+      report.resolvedAt = Math.max(report.resolvedAt ?? 0, date);
+    const id = Number(row.id);
+    const update = report.updates.get(id) ?? { id, date, impacts: [] };
+    report.updates.set(id, update);
+    if (row.component !== null && row.impact !== null)
+      update.impacts.push({
+        componentId: Number(row.component),
+        impact: String(row.impact) as Impact,
+      });
+  }
+  return manualIntervals(
+    [...reports.values()].map((r) => ({
+      resolvedAt: r.resolvedAt,
+      updates: [...r.updates.values()],
+    })),
+    now,
+  );
+}
+
+/** Recomputes every 30-minute slot that starts in [from, to) from the raw checks. */
+export async function rollupSlots(
+  client: Client,
+  from: number,
+  to: number,
+  now: number,
+) {
+  const oldest = await client.execute(
+    "SELECT MIN(checked_at) AS at FROM oeffigo_check",
+  );
+  const oldestAt = Date.parse(String(oldest.rows[0]?.at ?? ""));
+  if (!Number.isFinite(oldestAt)) return 0;
+  // A slot whose raw minutes were already deleted keeps its stored counts.
+  const first =
+    Math.max(Math.floor(from / SLOT_MS), Math.ceil(oldestAt / SLOT_MS)) *
+    SLOT_MS;
+  if (first >= Math.min(to, now)) return 0;
+  const raw = await client.execute({
+    sql: "SELECT payload FROM oeffigo_check WHERE checked_at >= ? AND checked_at < ? ORDER BY checked_at",
+    args: [
+      new Date(first - EDGE_MS).toISOString(),
+      new Date(Math.min(to, now) + EDGE_MS).toISOString(),
+    ],
+  });
+  const samples: Snapshot[] = [];
+  for (const row of raw.rows) {
+    try {
+      samples.push(JSON.parse(String(row.payload)));
+    } catch {
+      // A broken row is a gap, not a reason to drop the whole range.
+    }
+  }
+  const minutes = minuteLevels(samples, ids);
+  const manual = await readManual(client, now);
+  const manualBy = new Map<string, ManualInterval[]>();
+  for (const interval of manual) {
+    const id = serviceOfComponent.get(interval.componentId);
+    if (id) manualBy.set(id, [...(manualBy.get(id) ?? []), interval]);
+  }
+  const statements = [];
+  for (let start = first; start < Math.min(to, now); start += SLOT_MS) {
+    const end = Math.min(start + SLOT_MS, now);
+    for (const id of ids) {
+      const c = countMinutes(
+        minutes.get(id),
+        manualBy.get(id) ?? [],
+        start,
+        end,
+      );
+      statements.push({
+        sql: `INSERT INTO oeffigo_slot (slot_start, service, operational, degraded, partial, down, paused, unknown)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT (slot_start, service) DO UPDATE SET
+                operational = excluded.operational, degraded = excluded.degraded,
+                partial = excluded.partial, down = excluded.down,
+                paused = excluded.paused, unknown = excluded.unknown`,
+        args: [
+          start,
+          id,
+          c.operational,
+          c.degraded,
+          c.partial,
+          c.down,
+          c.paused,
+          c.unknown,
+        ],
+      });
+    }
+  }
+  if (statements.length) await client.batch(statements, "write");
+  return statements.length / ids.length;
+}
+
+let backfilled = false;
+let manualStamp: string | null = null;
+
+/**
+ * Runs after every collector tick: the current and previous slot always, the
+ * last week when a report changed (impacts can be backdated), and once per
+ * process everything since the newest stored slot.
+ */
+export async function refreshSlots(client: Client, now: number) {
+  const current = Math.floor(now / SLOT_MS) * SLOT_MS;
+  if (!backfilled) {
+    const newest = await client.execute(
+      "SELECT MAX(slot_start) AS at FROM oeffigo_slot",
+    );
+    const stored = Number(newest.rows[0]?.at ?? NaN);
+    const from =
+      Number.isFinite(stored) && stored > 0 ? stored - 2 * SLOT_MS : 0;
+    for (
+      let start = Math.max(from, now - 32 * DAY_MS);
+      start < now;
+      start += DAY_MS
+    )
+      await rollupSlots(client, start, start + DAY_MS, now);
+    backfilled = true;
+  }
+  const stamp = await client.execute(
+    "SELECT COUNT(*) AS n, MAX(updated_at) AS at FROM status_report_update",
+  );
+  const next = `${stamp.rows[0]?.n}:${stamp.rows[0]?.at}`;
+  const reportsChanged = manualStamp !== null && manualStamp !== next;
+  manualStamp = next;
+  await rollupSlots(
+    client,
+    reportsChanged ? now - 7 * DAY_MS : current - SLOT_MS,
+    now + SLOT_MS,
+    now,
+  );
+}
+
+const rangeDays: Record<Range, number> = {
+  "24h": 1,
+  "7d": 7,
+  "30d": 31,
+  "90d": 91,
+};
+
+export async function readRange(
+  client: Client,
+  range: Range,
+  now: number,
+): Promise<RangeHistory> {
+  const rows = await client.execute({
+    sql: `SELECT slot_start, service, ${levels.join(", ")} FROM oeffigo_slot WHERE slot_start >= ?`,
+    args: [now - rangeDays[range] * DAY_MS - DAY_MS],
+  });
+  return buildRange(
+    range,
+    rows.rows.map((row) => ({
+      start: Number(row.slot_start),
+      service: String(row.service),
+      counts: Object.fromEntries(
+        levels.map((l) => [l, Number(row[l] ?? 0)]),
+      ) as MinuteCounts,
+    })),
+    now,
+    ids,
+  );
+}

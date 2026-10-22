@@ -24,9 +24,12 @@ export function ProcessMessage({ value }: { value: string }) {
             />
           );
         },
-        ol: (_props: HTMLAttributes<HTMLOListElement>) => {
+        ol: (props: HTMLAttributes<HTMLOListElement>) => {
           return (
-            <ol className="marker:text-muted-foreground/50 list-inside list-decimal" />
+            <ol
+              className="marker:text-muted-foreground/50 list-inside list-decimal"
+              {...props}
+            />
           );
         },
         a: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => {

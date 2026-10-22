@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { RangeHistory } from "./availability";
+
 export const stateSchema = z.enum([
   "operational",
   "degraded",
@@ -352,106 +354,6 @@ export function headline(
     : "no_known_issues";
 }
 
-export const BUCKET_MS = 30 * 60_000;
-export const BUCKET_COUNT = 48;
-const FULL_BUCKET_CHECKS = 26;
-
-export type StateCounts = Partial<Record<ServiceState, number>>;
-export type HistoryBucket = {
-  start: string;
-  checks: number;
-  counts: StateCounts;
-  state: ServiceState;
-};
-
-const historyStateLabels = {
-  de: {
-    operational: "Verfügbar",
-    degraded: "Eingeschränkt",
-    down: "Unterbrochen",
-    paused: "Pausiert",
-    unknown: "Nicht bestätigt",
-  },
-  en: {
-    operational: "Available",
-    degraded: "Degraded",
-    down: "Outage",
-    paused: "Paused",
-    unknown: "Unconfirmed",
-  },
-} as const;
-
-export function historyBucketLabel(
-  locale: "de" | "en",
-  index: number,
-  bucket: HistoryBucket,
-) {
-  const start = Date.parse(bucket.start);
-  const format = new Intl.DateTimeFormat(locale === "de" ? "de-AT" : "en-GB", {
-    timeZone: "Europe/Vienna",
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  const slot =
-    locale === "de"
-      ? `Halbstunde ${index + 1} von 48`
-      : `Half hour ${index + 1} of 48`;
-  return `${slot}, ${format.format(start)}–${format.format(start + BUCKET_MS)} Europe/Vienna: ${historyStateLabels[locale][bucket.state]}`;
-}
-
-/** Green needs nearly every minute confirmed; any confirmed failure shows. */
-export function bucketState(
-  counts: StateCounts,
-  required: number,
-): ServiceState {
-  if (counts.down) return "down";
-  if (counts.degraded) return "degraded";
-  if ((counts.operational ?? 0) >= required) return "operational";
-  if (counts.paused) return "paused";
-  return "unknown";
-}
-
-export function historyWindowStart(now: number): number {
-  return (Math.floor(now / BUCKET_MS) - (BUCKET_COUNT - 1)) * BUCKET_MS;
-}
-
-export function buildHistory(
-  rows: readonly { bucket: number; id: string; state: string; n: number }[],
-  now: number,
-): Record<string, HistoryBucket[]> {
-  const start = historyWindowStart(now);
-  const grouped = new Map<string, StateCounts>();
-  for (const row of rows) {
-    const state = stateSchema.safeParse(row.state);
-    if (!state.success) continue;
-    const key = `${row.id}:${row.bucket}`;
-    const counts = grouped.get(key) ?? {};
-    counts[state.data] = (counts[state.data] ?? 0) + row.n;
-    grouped.set(key, counts);
-  }
-  const history: Record<string, HistoryBucket[]> = {};
-  for (const service of services) {
-    history[service.id] = Array.from({ length: BUCKET_COUNT }, (_, i) => {
-      const from = start + i * BUCKET_MS;
-      const counts = grouped.get(`${service.id}:${i}`) ?? {};
-      const elapsedMinutes = Math.floor((now - from) / 60_000);
-      const required =
-        i === BUCKET_COUNT - 1
-          ? Math.max(1, elapsedMinutes - 2)
-          : FULL_BUCKET_CHECKS;
-      return {
-        start: new Date(from).toISOString(),
-        checks: Object.values(counts).reduce((sum, n) => sum + n, 0),
-        counts,
-        state: bucketState(counts, required),
-      };
-    });
-  }
-  return history;
-}
-
 /** Legacy OpenStatus surfaces have no unknown state; never promote it to success. */
 export function nativeStatus(
   state: ServiceState,
@@ -496,7 +398,7 @@ export function serviceComponentStatus(state: ServiceState): string {
 }
 export type StatusData = {
   snapshot: Snapshot;
-  history: Record<string, HistoryBucket[]>;
+  history: RangeHistory;
 };
 
 export function serviceLabel(

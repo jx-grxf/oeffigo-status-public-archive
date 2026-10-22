@@ -11,7 +11,7 @@ import type {
 import { statusColors } from "@openstatus/ui/components/blocks/status.utils";
 import { Skeleton } from "@openstatus/ui/components/ui/skeleton";
 import { cn } from "@openstatus/ui/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale } from "next-intl";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -23,19 +23,22 @@ import { StatusBar } from "../../../../../components/status-page/status-bar";
 import { StatusFeed } from "../../../../../components/status-page/status-feed";
 import { usePathnamePrefix } from "../../../../../hooks/use-pathname-prefix";
 import {
+  type Bucket,
+  type Level,
+  type Range,
+  ranges,
+} from "../../../../../lib/oeffigo/availability";
+import {
   localizeMaintenance,
   localizeReport,
 } from "../../../../../lib/oeffigo/incident-copy";
 import {
-  BUCKET_MS,
   expireSnapshot,
   headline,
-  historyBucketLabel,
   MAX_AGE_MS,
   mergeManualStatus,
   serviceLabel,
   type Headline,
-  type HistoryBucket,
   type MergedService,
   type ServiceState,
   type StatusData,
@@ -44,6 +47,7 @@ import { useEnglishCopy } from "../../../../../lib/oeffigo/use-english-copy";
 import { formatDateRange } from "../../../../../lib/oeffigo/vienna-time";
 import { updatesWithImpactChanges } from "../../../../../lib/report-impacts";
 import { useTRPC } from "../../../../../lib/trpc/client";
+import { OutsideSection } from "./outside-section";
 
 type Locale = "de" | "en";
 
@@ -103,16 +107,65 @@ const copy = {
     vienna:
       "Echtzeitdaten in Wien sind eingeschränkt. Fahrplanzeiten und andere Regionen können weiterhin verfügbar sein.",
     functions: "Funktionen",
-    boardHint: "Zustand jetzt und Verlauf der letzten 24 Stunden",
-    ago24h: "vor 24 Std.",
-    ago12h: "vor 12 Std.",
+    level: {
+      operational: "Verfügbar",
+      degraded: "Eingeschränkt",
+      partial: "Teilausfall",
+      down: "Unterbrochen",
+      paused: "Pausiert",
+      unknown: "Nicht bestätigt",
+    },
+    range: {
+      "24h": "24 Std.",
+      "7d": "7 Tage",
+      "30d": "30 Tage",
+      "90d": "90 Tage",
+    },
+    rangeLong: {
+      "24h": "der letzten 24 Stunden",
+      "7d": "der letzten 7 Tage",
+      "30d": "der letzten 30 Tage",
+      "90d": "der letzten 90 Tage",
+    },
+    rangeStart: {
+      "24h": "vor 24 Std.",
+      "7d": "vor 7 Tagen",
+      "30d": "vor 30 Tagen",
+      "90d": "vor 90 Tagen",
+    },
+    rangePicker: "Zeitraum",
+    boardHint: (range: string) => `Zustand jetzt und Verlauf ${range}`,
     now: "jetzt",
-    tracker: "Verlauf der letzten 24 Stunden",
-    period: (n: number) => `Halbstunde ${n} von 48`,
-    checks: (n: number) => (n === 1 ? "1 Prüfung" : `${n} Prüfungen`),
-    noChecks: "keine Prüfung",
-    barHint:
-      "Ein Balken ist eine halbe Stunde. Grün braucht fast jede Minute eine bestätigte Prüfung.",
+    tracker: (range: string) => `Verlauf ${range}`,
+    period: (n: number, of: number) => `Abschnitt ${n} von ${of}`,
+    minutes: (n: number) =>
+      n < 60
+        ? `${n} Min.`
+        : n % 60
+          ? `${Math.floor(n / 60)} Std. ${n % 60} Min.`
+          : `${n / 60} Std.`,
+    noChecks: "keine Messung",
+    beforeHistory: "vor Messbeginn",
+    uptime: "Verfügbarkeit",
+    noUptime: "keine Messung",
+    pausedUptime: "pausiert",
+    summary: {
+      uptime: "Verfügbarkeit",
+      uptimeHint: "Schnitt der gemessenen Funktionen",
+      downtime: "Ausfallzeit",
+      downtimeHint: "bestätigt, am stärksten betroffene Funktion",
+      reports: "Meldungen",
+      reportsHint: "im Zeitraum veröffentlicht",
+      none: "–",
+    },
+    barHint: {
+      "24h": "Ein Balken ist eine halbe Stunde.",
+      "7d": "Ein Balken sind vier Stunden.",
+      "30d": "Ein Balken ist ein Tag.",
+      "90d": "Ein Balken ist ein Tag.",
+    },
+    barHintCoverage: "Grün braucht fast jede Minute eine bestätigte Prüfung.",
+    historySince: (date: string) => `Messungen gibt es seit ${date}.`,
     reports: "Meldungen",
     reportLanguage: "",
     noReports: "In den letzten 7 Tagen gab es keine Meldungen oder Wartungen.",
@@ -133,6 +186,14 @@ const copy = {
       [
         "Grün nur mit Nachweis",
         "Fehlt eine frische Bestätigung, bleibt die Funktion grau.",
+      ],
+      [
+        "Von außen",
+        "Alle fünf Minuten prüfen Messpunkte in Frankfurt und Zürich Schnittstelle, Suche, Website und Statusseite.",
+      ],
+      [
+        "Verfügbarkeit in Prozent",
+        "Von den gemessenen Minuten zählt ein Ausfall ganz, ein Teilausfall zu 30 %. Eingeschränkt senkt die Zahl nicht, Messlücken zählen nicht mit.",
       ],
     ],
   },
@@ -188,16 +249,65 @@ const copy = {
     vienna:
       "Real-time information in Vienna is affected. Scheduled times and other regions may remain available.",
     functions: "Services",
-    boardHint: "Current state and the last 24 hours",
-    ago24h: "24 h ago",
-    ago12h: "12 h ago",
+    level: {
+      operational: "Available",
+      degraded: "Degraded",
+      partial: "Partial outage",
+      down: "Unavailable",
+      paused: "Paused",
+      unknown: "Unconfirmed",
+    },
+    range: {
+      "24h": "24 h",
+      "7d": "7 days",
+      "30d": "30 days",
+      "90d": "90 days",
+    },
+    rangeLong: {
+      "24h": "the last 24 hours",
+      "7d": "the last 7 days",
+      "30d": "the last 30 days",
+      "90d": "the last 90 days",
+    },
+    rangeStart: {
+      "24h": "24 h ago",
+      "7d": "7 days ago",
+      "30d": "30 days ago",
+      "90d": "90 days ago",
+    },
+    rangePicker: "Time range",
+    boardHint: (range: string) => `Current state and ${range}`,
     now: "now",
-    tracker: "Last 24 hours",
-    period: (n: number) => `Half hour ${n} of 48`,
-    checks: (n: number) => (n === 1 ? "1 check" : `${n} checks`),
-    noChecks: "no checks",
-    barHint:
-      "Each bar is half an hour. Green needs a confirmed check almost every minute.",
+    tracker: (range: string) => `History of ${range}`,
+    period: (n: number, of: number) => `Period ${n} of ${of}`,
+    minutes: (n: number) =>
+      n < 60
+        ? `${n} min`
+        : n % 60
+          ? `${Math.floor(n / 60)} h ${n % 60} min`
+          : `${n / 60} h`,
+    noChecks: "no measurement",
+    beforeHistory: "before measurements began",
+    uptime: "Availability",
+    noUptime: "no measurement",
+    pausedUptime: "paused",
+    summary: {
+      uptime: "Availability",
+      uptimeHint: "average of measured services",
+      downtime: "Downtime",
+      downtimeHint: "confirmed, most affected service",
+      reports: "Reports",
+      reportsHint: "published in this period",
+      none: "–",
+    },
+    barHint: {
+      "24h": "Each bar is half an hour.",
+      "7d": "Each bar is four hours.",
+      "30d": "Each bar is one day.",
+      "90d": "Each bar is one day.",
+    },
+    barHintCoverage: "Green needs a confirmed check almost every minute.",
+    historySince: (date: string) => `Measurements started on ${date}.`,
     reports: "Reports",
     reportLanguage: "Some incident details are still published in German.",
     noReports: "No reports or maintenance in the last 7 days.",
@@ -218,6 +328,14 @@ const copy = {
       [
         "Green needs evidence",
         "Without a fresh confirmation, a service stays grey.",
+      ],
+      [
+        "From outside",
+        "Every five minutes, probes in Frankfurt and Zurich check the API, search, website and this page.",
+      ],
+      [
+        "Availability in percent",
+        "Of the measured minutes, an outage counts fully and a partial outage at 30 %. Degraded service does not lower it, and gaps are not counted.",
       ],
     ],
   },
@@ -240,13 +358,14 @@ const stateClass: Record<ServiceState, string> = {
   unknown: "text-muted-foreground",
 };
 
-const bucketStates = [
+const cardLevels = [
   "down",
+  "partial",
   "degraded",
   "paused",
   "operational",
   "unknown",
-] as const satisfies readonly ServiceState[];
+] as const satisfies readonly Level[];
 
 const legend = [
   "operational",
@@ -274,13 +393,41 @@ function barStatus(state: ServiceState): StatusType {
   }
 }
 
-const stateOfBar: Record<StatusType, ServiceState> = {
-  success: "operational",
-  degraded: "degraded",
-  error: "down",
-  info: "paused",
-  empty: "unknown",
-};
+function levelBar(level: Level): StatusType {
+  return level === "partial" ? "degraded" : barStatus(level);
+}
+
+// Rounded down, so 99.996 % never shows as a clean 100 %.
+function formatUptime(locale: Locale, value: number) {
+  const floored = Math.floor(value * 10_000) / 10_000;
+  return new Intl.NumberFormat(locale === "de" ? "de-AT" : "en-GB", {
+    style: "percent",
+    minimumFractionDigits: floored === 1 ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(floored);
+}
+
+function mostlyPaused(buckets: Bucket[] | undefined) {
+  let paused = 0;
+  let measured = 0;
+  for (const b of buckets ?? []) {
+    paused += b.counts.paused;
+    measured +=
+      b.counts.operational +
+      b.counts.degraded +
+      b.counts.partial +
+      b.counts.down;
+  }
+  return paused > measured;
+}
+
+function formatDay(locale: Locale, date: Date) {
+  return date.toLocaleDateString(locale === "de" ? "de-AT" : "en-GB", {
+    timeZone: "Europe/Vienna",
+    day: "numeric",
+    month: "long",
+  });
+}
 
 function useClock() {
   const [now, setNow] = useState<number | null>(null);
@@ -340,6 +487,7 @@ export function Client() {
   const { domain } = useParams<{ domain: string }>();
   const prefix = usePathnamePrefix();
   const now = useClock();
+  const [range, setRange] = useState<Range>("24h");
 
   const { data: page, isError: pageError } = useQuery({
     ...trpc.statusPage.get.queryOptions({ slug: domain }),
@@ -355,16 +503,26 @@ export function Client() {
       localizeMaintenance(maintenance, englishCopy),
     ) ?? [];
   const { data, isError: statusError } = useQuery<StatusData>({
-    queryKey: ["oeffigo-status"],
-    queryFn: async () => {
-      const response = await fetch("/api/oeffigo", { cache: "no-store" });
-      if (!response.ok) throw new Error("status_unavailable");
-      return response.json();
-    },
+    queryKey: ["oeffigo-status", range],
+    placeholderData: keepPreviousData,
+    queryFn: () => fetchStatus(range),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     retry: 1,
   });
+  // The other ranges load behind the first one, so the picker switches without waiting.
+  const queryClient = useQueryClient();
+  const firstLoaded = data != null;
+  useEffect(() => {
+    if (!firstLoaded) return;
+    for (const other of ranges) {
+      void queryClient.prefetchQuery({
+        queryKey: ["oeffigo-status", other],
+        queryFn: () => fetchStatus(other),
+        staleTime: 60_000,
+      });
+    }
+  }, [firstLoaded, queryClient]);
 
   const loading =
     now === null || (!page && !pageError) || (!data && !statusError);
@@ -408,6 +566,50 @@ export function Client() {
       (e) => e.type === "maintenance" && e.id === maintenance.id,
     ),
   );
+
+  const firstBucket = data?.history.buckets.departures?.[0];
+  const rangeStartAt = firstBucket ? Date.parse(firstBucket.start) : 0;
+  const historyStart = data?.history.since
+    ? Date.parse(data.history.since)
+    : null;
+  // Reports and maintenance per function, so a bar's card names what was going on then.
+  const barEvents = (componentId: number): BarEvent[] => [
+    ...statusReports
+      .filter((r) =>
+        r.statusReportsToPageComponents.some(
+          (c) => c.pageComponent.id === componentId,
+        ),
+      )
+      .flatMap((r) => {
+        const dates = r.statusReportUpdates.map((u) => u.date.getTime());
+        if (dates.length === 0) return [];
+        const resolved = r.statusReportUpdates
+          .filter((u) => u.status === "resolved")
+          .map((u) => u.date.getTime());
+        return [
+          {
+            id: r.id,
+            name: r.title,
+            type: "report" as const,
+            from: new Date(Math.min(...dates)),
+            to: resolved.length ? new Date(Math.max(...resolved)) : null,
+          },
+        ];
+      }),
+    ...maintenances
+      .filter((m) =>
+        m.maintenancesToPageComponents.some(
+          (c) => c.pageComponent.id === componentId,
+        ),
+      )
+      .map((m) => ({
+        id: m.id,
+        name: m.title,
+        type: "maintenance" as const,
+        from: m.from,
+        to: m.to,
+      })),
+  ];
 
   const lead = (() => {
     if (statusError) return text.lead.unavailable;
@@ -453,7 +655,7 @@ export function Client() {
       <section
         aria-labelledby="status-headline"
         aria-live="polite"
-        className="pt-12 sm:pt-20"
+        className="pt-10 sm:pt-14"
       >
         {loading ? (
           <div className="flex flex-col gap-5">
@@ -483,13 +685,13 @@ export function Client() {
             </span>
             <h1
               id="status-headline"
-              className="max-w-4xl text-[clamp(2.5rem,6.5vw,4.75rem)] leading-[1.02] font-semibold tracking-[-0.04em] text-balance"
+              className="max-w-3xl text-[clamp(2rem,4.2vw,3.25rem)] leading-[1.05] font-semibold tracking-[-0.035em] text-balance"
             >
               {state === "degraded" || state === "down"
                 ? text.headline[state](joinNames(locale, affected.map(name)))
                 : text.headline[state]()}
             </h1>
-            <p className="text-muted-foreground max-w-2xl text-lg leading-relaxed text-pretty">
+            <p className="text-muted-foreground max-w-2xl text-base leading-relaxed text-pretty sm:text-lg">
               {lead}
             </p>
           </div>
@@ -637,9 +839,12 @@ export function Client() {
             <h2 id="functions-title" className="text-lg font-semibold">
               {text.functions}
             </h2>
-            <p className="text-muted-foreground text-sm">{text.boardHint}</p>
+            <p className="text-muted-foreground text-sm">
+              {text.boardHint(text.rangeLong[range])}
+            </p>
           </div>
-          <ul className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          <RangePicker locale={locale} value={range} onChange={setRange} />
+          <ul className="text-muted-foreground flex w-full flex-wrap gap-x-4 gap-y-1 text-xs">
             {legend.map((item) => (
               <li key={item} className="flex items-center gap-1.5">
                 <span
@@ -659,12 +864,30 @@ export function Client() {
             ))}
           </ul>
         </div>
-        <HistoryLabels locale={locale}>
+        <RangeSummary
+          locale={locale}
+          range={range}
+          history={data?.history}
+          reports={
+            statusReports.filter((r) => {
+              const dates = r.statusReportUpdates.map((u) => u.date.getTime());
+              if (!dates.length || !rangeStartAt) return false;
+              const resolved = r.statusReportUpdates
+                .filter((u) => u.status === "resolved")
+                .map((u) => u.date.getTime());
+              const end = resolved.length
+                ? Math.max(...resolved)
+                : Number.POSITIVE_INFINITY;
+              return end > rangeStartAt;
+            }).length
+          }
+        />
+        <HistoryLabels locale={locale} range={range}>
           <ul className="divide-y">
             {services.map((service) => (
               <li
                 key={service.id}
-                className="grid gap-x-10 gap-y-3 px-5 py-4 sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(14rem,26rem)_11rem] md:items-center"
+                className="grid gap-x-10 gap-y-3 px-5 py-4 sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,30rem)_9rem] md:items-center"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -691,33 +914,50 @@ export function Client() {
                     loading={loading}
                     locale={locale}
                     service={service}
+                    uptime={data?.history.uptime[service.id]}
+                    mostlyPaused={mostlyPaused(
+                      data?.history.buckets[service.id],
+                    )}
+                    range={range}
                   />
                 </div>
                 <div>
                   <ServiceHistory
                     locale={locale}
-                    buckets={data?.history[service.id]}
+                    range={range}
+                    buckets={data?.history.buckets[service.id]}
+                    since={data?.history.since ?? null}
+                    events={barEvents(service.componentId)}
                   />
                 </div>
                 <StateLabel
-                  className="hidden md:block"
+                  className="hidden md:flex"
                   loading={loading}
                   locale={locale}
                   service={service}
+                  uptime={data?.history.uptime[service.id]}
+                  mostlyPaused={mostlyPaused(data?.history.buckets[service.id])}
+                  range={range}
                 />
               </li>
             ))}
           </ul>
         </HistoryLabels>
-        <div className="text-muted-foreground grid gap-x-10 gap-y-2 border-t px-5 py-3 text-xs sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(14rem,26rem)_11rem]">
-          <p className="order-2 md:order-1">{text.barHint}</p>
+        <div className="text-muted-foreground grid gap-x-10 gap-y-2 border-t px-5 py-3 text-xs sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,30rem)_9rem]">
+          <p className="order-2 md:order-1">
+            {text.barHint[range]} {text.barHintCoverage}{" "}
+            {historyStart && historyStart > rangeStartAt
+              ? text.historySince(formatDay(locale, new Date(historyStart)))
+              : null}
+          </p>
           <div className="order-1 flex justify-between font-mono md:order-2">
-            <span>{text.ago24h}</span>
-            <span className="hidden sm:inline">{text.ago12h}</span>
+            <span>{text.rangeStart[range]}</span>
             <span>{text.now}</span>
           </div>
         </div>
       </section>
+
+      <OutsideSection locale={locale} range={range} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
         <section
@@ -821,47 +1061,193 @@ function StateLabel({
   loading,
   locale,
   service,
+  uptime,
+  mostlyPaused,
+  range,
 }: {
   className?: string;
   loading: boolean;
   locale: Locale;
   service: MergedService;
+  uptime: number | null | undefined;
+  mostlyPaused: boolean;
+  range: Range;
 }) {
+  const text = copy[locale];
   if (loading)
     return <Skeleton className={cn("h-4 w-20 shrink-0", className)} />;
   return (
     <span
       className={cn(
-        "shrink-0 text-right text-sm font-medium",
-        stateClass[service.maintenance ? "paused" : service.state],
+        "flex shrink-0 flex-col items-end gap-0.5 text-right",
         className,
       )}
     >
-      {stateLabel(locale, service)}
+      <span
+        className={cn(
+          "text-sm font-medium",
+          stateClass[service.maintenance ? "paused" : service.state],
+        )}
+      >
+        {stateLabel(locale, service)}
+      </span>
+      {uptime === undefined ? null : (
+        <span
+          className="text-muted-foreground font-mono text-xs tabular-nums"
+          title={`${text.uptime} ${text.rangeLong[range]}`}
+        >
+          {uptime !== null
+            ? formatUptime(locale, uptime)
+            : mostlyPaused
+              ? text.pausedUptime
+              : text.noUptime}
+          <span className="sr-only">
+            {` ${text.uptime} ${text.rangeLong[range]}`}
+          </span>
+        </span>
+      )}
     </span>
   );
 }
 
+function RangeSummary({
+  locale,
+  range,
+  history,
+  reports,
+}: {
+  locale: Locale;
+  range: Range;
+  history: StatusData["history"] | undefined;
+  reports: number;
+}) {
+  const text = copy[locale];
+  const values = Object.values(history?.uptime ?? {}).filter(
+    (v): v is number => v !== null,
+  );
+  const average = values.length
+    ? values.reduce((a, b) => a + b, 0) / values.length
+    : null;
+  const downtime = Math.max(
+    0,
+    ...Object.values(history?.buckets ?? {}).map((buckets) =>
+      buckets.reduce((sum, b) => sum + b.counts.down, 0),
+    ),
+  );
+  const items = [
+    {
+      label: text.summary.uptime,
+      value:
+        average === null ? text.summary.none : formatUptime(locale, average),
+      hint: text.summary.uptimeHint,
+    },
+    {
+      label: text.summary.downtime,
+      value: history ? text.minutes(downtime) : text.summary.none,
+      hint: text.summary.downtimeHint,
+    },
+    {
+      label: text.summary.reports,
+      value: String(reports),
+      hint: text.summary.reportsHint,
+    },
+  ];
+  return (
+    <dl
+      aria-label={text.rangeLong[range]}
+      className="grid grid-cols-3 divide-x border-b"
+    >
+      {items.map((item) => (
+        <div key={item.label} className="px-5 py-4 sm:px-6">
+          <dt className="text-muted-foreground text-xs">{item.label}</dt>
+          <dd className="mt-1 font-mono text-lg tabular-nums sm:text-2xl">
+            {history ? item.value : <Skeleton className="h-7 w-20" />}
+          </dd>
+          <dd className="text-muted-foreground mt-0.5 hidden text-xs sm:block">
+            {item.hint}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function RangePicker({
+  locale,
+  value,
+  onChange,
+}: {
+  locale: Locale;
+  value: Range;
+  onChange: (range: Range) => void;
+}) {
+  const text = copy[locale];
+  return (
+    <div
+      role="group"
+      aria-label={text.rangePicker}
+      className="bg-muted inline-flex rounded-lg p-0.5 text-sm"
+    >
+      {ranges.map((range) => (
+        <button
+          key={range}
+          type="button"
+          aria-pressed={value === range}
+          onClick={() => onChange(range)}
+          className={cn(
+            "rounded-md px-3 py-1 font-mono text-xs tabular-nums transition-colors",
+            value === range
+              ? "bg-background text-foreground shadow-xs"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {text.range[range]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type BarEvent = StatusBarData["events"][number];
+
+const bucketSize: Record<Range, number> = {
+  "24h": 30 * 60_000,
+  "7d": 4 * 3_600_000,
+  "30d": 0,
+  "90d": 0,
+};
+
+// Bars are cut along Vienna days and hours, so they are labelled in Vienna time.
+function bucketTitle(locale: Locale, range: Range, start: Date) {
+  if (!bucketSize[range]) return formatDay(locale, start);
+  const time = (d: Date) =>
+    d.toLocaleTimeString(locale === "de" ? "de-AT" : "en-GB", {
+      timeZone: "Europe/Vienna",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  const end = new Date(start.getTime() + bucketSize[range]);
+  return `${formatDay(locale, start)}, ${time(start)}–${time(end)}`;
+}
+
 function HistoryLabels({
   locale,
+  range,
   children,
 }: {
   locale: Locale;
+  range: Range;
   children: React.ReactNode;
 }) {
   const parent = useStatusBlocksLabels();
   const value = useMemo(
     () => ({
       ...parent,
-      ariaStatusTracker: copy[locale].tracker,
-      ariaDayStatus: copy[locale].period,
-      formatDateShort: (start: Date) =>
-        `${formatTime(locale, start)}–${formatTime(
-          locale,
-          new Date(start.getTime() + BUCKET_MS),
-        )}`,
+      ariaStatusTracker: copy[locale].tracker(copy[locale].rangeLong[range]),
+      ariaDayStatus: (n: number) => copy[locale].period(n, 0),
+      formatDateShort: (start: Date) => bucketTitle(locale, range, start),
     }),
-    [parent, locale],
+    [parent, locale, range],
   );
   return (
     <StatusBlocksI18nProvider value={value}>
@@ -872,34 +1258,61 @@ function HistoryLabels({
 
 function ServiceHistory({
   locale,
+  range,
   buckets,
+  since,
+  events,
 }: {
   locale: Locale;
-  buckets: HistoryBucket[] | undefined;
+  range: Range;
+  buckets: Bucket[] | undefined;
+  since: string | null;
+  events: BarEvent[];
 }) {
   const text = copy[locale];
-  const bars = useMemo<StatusBarData[] | undefined>(
-    () =>
-      buckets?.map((bucket, index) => ({
+  const bars = useMemo<StatusBarData[] | undefined>(() => {
+    const sinceAt = since ? Date.parse(since) : Number.POSITIVE_INFINITY;
+    return buckets?.map((bucket, index) => {
+      const start = Date.parse(bucket.start);
+      const end = Date.parse(bucket.end);
+      const before = end <= sinceAt;
+      const measured = cardLevels.some(
+        (l) => l !== "unknown" && bucket.counts[l],
+      );
+      const title = bucketTitle(locale, range, new Date(start));
+      return {
         day: bucket.start,
-        ariaLabel: historyBucketLabel(locale, index, bucket),
-        bar: [{ status: barStatus(bucket.state), height: 100 }],
+        ariaLabel: `${text.period(index + 1, buckets.length)}, ${title}: ${
+          before ? text.beforeHistory : text.level[bucket.level]
+        }`,
+        bar: [
+          { status: before ? "empty" : levelBar(bucket.level), height: 100 },
+        ],
         card:
-          bucket.checks === 0
-            ? [{ status: "empty", value: text.noChecks }]
-            : bucketStates
-                .filter((s) => bucket.counts[s])
-                .map((s) => ({
-                  status: barStatus(s),
-                  value: text.checks(bucket.counts[s] ?? 0),
+          before || !measured
+            ? [
+                {
+                  status: "empty",
+                  value: before ? text.beforeHistory : text.noChecks,
+                },
+              ]
+            : cardLevels
+                .filter((l) => bucket.counts[l])
+                .map((l) => ({
+                  status: levelBar(l),
+                  value: `${text.level[l]}|${text.minutes(bucket.counts[l])}`,
                 })),
-        events: [],
-      })),
-    [buckets, locale, text],
-  );
+        events: events.filter(
+          (e) =>
+            (e.from?.getTime() ?? 0) < end &&
+            (e.to?.getTime() ?? Number.POSITIVE_INFINITY) > start,
+        ),
+      };
+    });
+  }, [buckets, events, locale, range, since, text]);
   if (!bars) return <Skeleton className="h-8 w-full" />;
   return (
-    // A local radius keeps 48 slim bars from turning into pills.
+    // A local radius keeps up to 90 slim bars from turning into pills.
     <div className="[--radius:0.125rem] [&_[data-slot=status-bar]]:h-8 [&_[data-slot=status-bar]]:gap-[2px]">
       <StatusBar
         data={bars}
@@ -919,29 +1332,40 @@ function ServiceHistory({
             }}
           />
         )}
-        renderCard={(item, index) => (
-          <div key={index} className="flex items-baseline gap-4">
-            <span className="flex items-center gap-2">
-              <span
-                className={cn(
-                  "size-2.5 rounded-sm",
-                  item.status === "empty" && "bg-muted-foreground/40",
-                )}
-                style={{
-                  backgroundColor:
-                    item.status === "empty"
-                      ? undefined
-                      : statusColors[item.status],
-                }}
-              />
-              {text.state[stateOfBar[item.status]]}
-            </span>
-            <span className="text-muted-foreground ml-auto font-mono text-xs">
-              {item.value}
-            </span>
-          </div>
-        )}
+        renderCard={(item, index) => {
+          const [label, value] = item.value.includes("|")
+            ? item.value.split("|")
+            : [item.value, ""];
+          return (
+            <div key={index} className="flex items-baseline gap-4">
+              <span className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "size-2.5 rounded-sm",
+                    item.status === "empty" && "bg-muted-foreground/40",
+                  )}
+                  style={{
+                    backgroundColor:
+                      item.status === "empty"
+                        ? undefined
+                        : statusColors[item.status],
+                  }}
+                />
+                {label}
+              </span>
+              <span className="text-muted-foreground ml-auto font-mono text-xs">
+                {value}
+              </span>
+            </div>
+          );
+        }}
       />
     </div>
   );
+}
+
+async function fetchStatus(range: Range): Promise<StatusData> {
+  const response = await fetch(`/api/oeffigo?range=${range}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("status_unavailable");
+  return response.json();
 }
