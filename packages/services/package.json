@@ -9,6 +9,10 @@
       "import": "./src/index.ts",
       "types": "./src/index.ts"
     },
+    "./status-app-notice": {
+      "import": "./src/status-app-notice/index.ts",
+      "types": "./src/status-app-notice/index.ts"
+    },
     "./status-translation": {
       "import": "./src/status-translation/index.ts",
       "types": "./src/status-translation/index.ts"

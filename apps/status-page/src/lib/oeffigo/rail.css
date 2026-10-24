@@ -1,0 +1,118 @@
+/*
+ * Linienschiene. Farben nur aus den Status-Tokens (--success, --warning,
+ * --destructive, --muted-foreground) und der Fläche (--foreground, --background).
+ * Tempo: grün ruhig, eingeschränkt langsamer, unterbrochen steht das Fahrzeug.
+ */
+.og-rail {
+  width: 100%;
+}
+.og-rail--compact {
+  max-width: 28rem;
+}
+.og-rail svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+}
+.og-rail-seg--quiet {
+  opacity: 0.4;
+}
+.og-rail-vehicle {
+  transform: translateX(var(--rest));
+}
+.og-rail-labels {
+  position: relative;
+  height: 2.4em;
+  margin-top: 0.25rem;
+  font-size: clamp(0.625rem, 3.1vw, 0.75rem);
+  line-height: 1.25;
+}
+.og-rail-label {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  text-align: center;
+  white-space: nowrap;
+}
+.og-rail-label:first-child {
+  transform: translateX(-30%);
+}
+.og-rail-label:last-child {
+  transform: translateX(-70%);
+}
+.og-rail-label b {
+  display: block;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.og-rail-label i {
+  display: block;
+  font-style: normal;
+  color: var(--tone);
+}
+.og-rail--compact .og-rail-labels {
+  font-size: clamp(0.625rem, 3vw, 0.6875rem);
+}
+
+@keyframes og-rail-run {
+  0% {
+    transform: translateX(var(--enter));
+  }
+  12%,
+  18% {
+    transform: translateX(var(--x0));
+  }
+  34%,
+  40% {
+    transform: translateX(var(--x1));
+  }
+  56%,
+  62% {
+    transform: translateX(var(--x2));
+  }
+  78%,
+  84% {
+    transform: translateX(var(--x3));
+  }
+  100% {
+    transform: translateX(var(--exit));
+  }
+}
+@keyframes og-rail-stand {
+  from {
+    transform: translateX(var(--enter));
+  }
+  to {
+    transform: translateX(var(--stand));
+  }
+}
+@keyframes og-rail-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .og-rail-vehicle {
+    animation: og-rail-run var(--dur) ease-in-out infinite;
+  }
+  .og-rail[data-pace="down"] .og-rail-vehicle {
+    animation: og-rail-stand 4.5s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  }
+  .og-rail-stop--degraded .og-rail-dot,
+  .og-rail-stop--degraded .og-rail-halo,
+  .og-rail-signal .og-rail-lamp {
+    animation: og-rail-blink 1.6s ease-in-out infinite;
+  }
+  html[data-tab-hidden] .og-rail-vehicle,
+  html[data-tab-hidden] .og-rail-dot,
+  html[data-tab-hidden] .og-rail-halo,
+  html[data-tab-hidden] .og-rail-lamp {
+    animation-play-state: paused;
+  }
+}

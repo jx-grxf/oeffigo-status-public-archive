@@ -21,8 +21,15 @@ try {
   await client.execute(
     "CREATE TABLE IF NOT EXISTS oeffigo_slot (slot_start INTEGER NOT NULL, service TEXT NOT NULL, operational INTEGER NOT NULL, degraded INTEGER NOT NULL, partial INTEGER NOT NULL, down INTEGER NOT NULL, paused INTEGER NOT NULL, unknown INTEGER NOT NULL, PRIMARY KEY (slot_start, service))",
   );
+  // Warum ein Abschnitt nicht grün war (Ursachen in Minuten); der Collector legt sie auch selbst an.
+  await client.execute(
+    "CREATE TABLE IF NOT EXISTS oeffigo_slot_cause (slot_start INTEGER NOT NULL, service TEXT NOT NULL, causes TEXT NOT NULL, PRIMARY KEY (slot_start, service))",
+  );
   await client.execute(
     "CREATE TABLE IF NOT EXISTS oeffigo_translation (kind TEXT NOT NULL CHECK (kind IN ('report','update','maintenance')), ref_id INTEGER NOT NULL, locale TEXT NOT NULL CHECK (locale = 'en'), title TEXT, message TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY (kind, ref_id, locale))",
+  );
+  await client.execute(
+    "CREATE TABLE IF NOT EXISTS oeffigo_app_notice (kind TEXT NOT NULL CHECK (kind IN ('report','maintenance')), ref_id INTEGER NOT NULL, show_in_app INTEGER NOT NULL DEFAULT 0 CHECK (show_in_app IN (0, 1)), regions TEXT NOT NULL DEFAULT '[]', updated_at INTEGER NOT NULL, PRIMARY KEY (kind, ref_id))",
   );
   const owner = (process.env.OWNER_EMAIL || "").trim().toLowerCase();
   if (!owner || !owner.includes("@")) throw new Error("OWNER_EMAIL required");

@@ -45,7 +45,7 @@ type PromResult = {
   value?: [number, string];
 }[];
 
-async function prom(
+export async function prom(
   path: string,
   params: Record<string, string>,
 ): Promise<PromResult | null> {

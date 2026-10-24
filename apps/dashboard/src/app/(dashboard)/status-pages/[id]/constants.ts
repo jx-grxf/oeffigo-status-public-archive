@@ -15,6 +15,7 @@ export const STATUS_PAGE_TABS: {
 }[] = [
   { value: "status-reports", label: "Status Reports", icon: Report },
   { value: "maintenances", label: "Maintenances", icon: Maintenance },
+  { value: "app", label: "In der App", icon: Report },
   { value: "translations", label: "English", icon: Globe },
   { value: "subscribers", label: "Subscribers", icon: Team },
   { value: "components", label: "Components", icon: Components },

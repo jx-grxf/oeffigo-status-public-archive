@@ -2,13 +2,31 @@ import { notFound, unauthorized } from "next/navigation";
 
 import { auth } from "../../../../../../../lib/auth";
 import {
+  feedComponentStatus,
   nativeStatus,
-  serviceComponentStatus,
 } from "../../../../../../../lib/oeffigo/model";
 import { readCombinedStatus } from "../../../../../../../lib/oeffigo/public-state";
 import { getQueryClient, trpc } from "../../../../../../../lib/trpc/server";
 
 export const dynamic = "force-dynamic";
+
+type Services = NonNullable<
+  Awaited<ReturnType<typeof readCombinedStatus>>["services"]
+>;
+
+/**
+ * `status` ist der bisherige Wert der Funktion, neu ist `paused` für bewusst
+ * ausgeschaltete Funktionen (Wartung bleibt `under_maintenance`). `note` nennt
+ * bei pausierten und unbestätigten Funktionen den Grund.
+ */
+function liveFields(services: Services, componentId: number) {
+  const service = services.find((s) => s.componentId === componentId);
+  if (!service) return { status: "unknown" };
+  return {
+    status: feedComponentStatus(service),
+    ...(service.note ? { note: service.note } : {}),
+  };
+}
 
 export async function GET(
   _request: Request,
@@ -58,6 +76,19 @@ export async function GET(
         ? await readCombinedStatus(page.trackers)
         : undefined;
 
+    // Fehlt die Tabelle, bleiben die Felder weg: der ÖffiGo-Server zeigt dann
+    // wie bisher alle offenen Meldungen in der App.
+    const appNotices = live
+      ? await queryClient
+          .fetchQuery(
+            trpc.statusAppNotice.published.queryOptions({
+              slug: domain,
+              pw: new URL(_request.url).searchParams.get("pw"),
+            }),
+          )
+          .catch(() => null)
+      : null;
+
     const res = {
       title: page.title,
       description: page.description,
@@ -81,14 +112,7 @@ export async function GET(
         order: component.order,
         groupId: component.groupId,
         groupOrder: component.groupOrder,
-        ...(live
-          ? {
-              status: serviceComponentStatus(
-                live.services.find((s) => s.componentId === component.id)
-                  ?.state ?? "unknown",
-              ),
-            }
-          : {}),
+        ...(live ? liveFields(live.services, component.id) : {}),
       })),
       pageComponentGroups: page.pageComponentGroups.map((group) => ({
         id: group.id,
@@ -109,6 +133,12 @@ export async function GET(
         pageComponents: maintenance.maintenancesToPageComponents.map(
           (item) => item.pageComponentId,
         ),
+        ...(appNotices
+          ? (appNotices.maintenances[maintenance.id] ?? {
+              showInApp: false,
+              regions: [],
+            })
+          : {}),
       })),
       statusReports: page.statusReports.map((report) => ({
         id: report.id,
@@ -123,6 +153,9 @@ export async function GET(
         pageComponents: report.statusReportsToPageComponents.map(
           (item) => item.pageComponentId,
         ),
+        ...(appNotices
+          ? (appNotices.reports[report.id] ?? { showInApp: false, regions: [] })
+          : {}),
         statusReportUpdates: report.statusReportUpdates.map((update) => ({
           id: update.id,
           status: update.status,

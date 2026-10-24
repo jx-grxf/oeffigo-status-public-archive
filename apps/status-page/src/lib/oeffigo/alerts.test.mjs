@@ -5,6 +5,7 @@ import { advanceAlerts, configuredChannels } from "./alert-delivery.ts";
 import {
   CONFIRM,
   evaluateAlerts,
+  duration,
   formatAlert,
   formatWelcome,
   readSignals,
@@ -191,10 +192,7 @@ test("messages name the problem, the time and the recovery", () => {
     minute(0),
   );
   assert.equal(single.subject, "ÖffiGo · Ausfall: API /health");
-  assert.match(
-    single.text,
-    /^🔴 Ausfall\n\nAusfall: API \/health · seit \d\d:\d\d/,
-  );
+  assert.match(single.text, /^🔴 Ausfall\n\nAPI \/health · seit \d\d:\d\d/);
   assert.match(single.html, /<b>Ausfall<\/b>/);
   assert.match(single.text, /https:\/\/status\.oeffigo\.app$/);
 
@@ -206,6 +204,27 @@ test("messages name the problem, the time and the recovery", () => {
     minute(0),
   );
   assert.equal(many.subject, "ÖffiGo · Ausfall und Einschränkung");
+  assert.match(many.text, /\nAusfall: A · seit/);
+  assert.match(many.text, /\nEinschränkung: B · seit/);
+
+  const degraded = formatAlert(
+    [
+      {
+        kind: "problem",
+        id: "traffic:planning",
+        label: "Nutzerverkehr · Routenplanung",
+        level: "degraded",
+        detail: "48 Anfragen in 10 Min.",
+      },
+    ],
+    minute(0),
+  );
+  assert.equal(
+    degraded.subject,
+    "ÖffiGo · Einschränkung: Nutzerverkehr · Routenplanung",
+  );
+  assert.doesNotMatch(degraded.text, /Eingeschränkt/);
+  assert.equal(degraded.text.match(/Einschränkung/g).length, 1);
 
   const back = formatAlert(
     [
@@ -219,7 +238,19 @@ test("messages name the problem, the time and the recovery", () => {
     minute(125),
   );
   assert.equal(back.subject, "ÖffiGo · Wieder in Ordnung: C");
-  assert.match(back.text, /C · nach 2 Std\./);
+  assert.match(back.text, /C · nach 2 Std\. 5 Min\./);
+  assert.equal(
+    duration(new Date(minute(0)).toISOString(), minute(93)),
+    "1 Std. 33 Min.",
+  );
+  assert.equal(
+    duration(new Date(minute(0)).toISOString(), minute(120)),
+    "2 Std.",
+  );
+  assert.equal(
+    duration(new Date(minute(0)).toISOString(), minute(59)),
+    "59 Min.",
+  );
 
   const muted = formatAlert(
     [

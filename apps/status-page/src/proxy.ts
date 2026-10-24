@@ -21,6 +21,12 @@ export default async function proxy(req: NextRequest) {
   // Machine routes serve themselves; only the lock above applies to them.
   if (url.pathname.startsWith("/api/")) return NextResponse.next();
   if (/^\/(brand|fonts)\//.test(url.pathname)) return NextResponse.next();
+  // Prototyp ohne Datenbank; im Produktionsbuild fällt der Pfad in die Umschreibung und endet im 404.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    url.pathname.startsWith("/proto/")
+  )
+    return NextResponse.next();
   const tenant = await db
     .select({ accessType: page.accessType, published: page.published })
     .from(page)

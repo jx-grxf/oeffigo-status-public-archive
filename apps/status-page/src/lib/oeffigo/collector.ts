@@ -1,17 +1,29 @@
 import { createClient } from "@libsql/client";
 
 import { processAlerts } from "./alert-delivery";
+import type { SignalReading } from "./alerts";
 import { type Range, ranges } from "./availability";
 import {
+  applyRealtimeGaps,
+  applyTraffic,
   expireSnapshot,
   newerReport,
   projectReport,
   type ServiceState,
   type Snapshot,
   type StatusData,
+  services,
 } from "./model";
 import { probe } from "./probe";
+import { readSentry } from "./sentry";
 import { readRange, refreshSlots } from "./slots";
+import {
+  type FunctionVerdict,
+  readRealtimeGaps,
+  readTraffic,
+  REGION_NAMES,
+  SLOW_SECONDS,
+} from "./traffic";
 
 function database() {
   return createClient({
@@ -40,10 +52,13 @@ let databaseFailures = 0;
 // Cloudflare serves /v1/status with stale-while-revalidate, so a later read can be older.
 let latestReport: unknown = null;
 export async function collect() {
-  const [api, website, report] = await Promise.all([
+  const [api, website, report, traffic, sentry, gaps] = await Promise.all([
     probe("https://api.oeffigo.app/health", true),
     probe("https://oeffigo.app"),
     readReport(),
+    readTraffic(Date.now()).catch(() => null),
+    readSentry(Date.now()).catch(() => null),
+    readRealtimeGaps().catch(() => null),
   ]);
   for (const [name, result] of [
     ["health", api],
@@ -68,12 +83,18 @@ export async function collect() {
   };
   const state = (ok: boolean, count: number): ServiceState =>
     ok ? "operational" : count >= 3 ? "down" : "unknown";
-  const snapshot = projectReport(
-    latestReport,
-    state(api.ok, failures.api),
-    state(website.ok, failures.website),
-    now,
-    api.ms,
+  const snapshot = applyRealtimeGaps(
+    applyTraffic(
+      projectReport(
+        latestReport,
+        state(api.ok, failures.api),
+        state(website.ok, failures.website),
+        now,
+        api.ms,
+      ),
+      traffic,
+    ),
+    gaps,
   );
   staleChecks = snapshot.stale ? staleChecks + 1 : 0;
   const client = database();
@@ -106,6 +127,11 @@ export async function collect() {
         reportFresh: !snapshot.stale,
         staleChecks,
         report: latestReport,
+        extra: [
+          ...trafficSignals(traffic),
+          ...realtimeSignals(gaps),
+          ...(sentry ? [sentry] : []),
+        ],
         now,
       });
     } catch {
@@ -115,6 +141,72 @@ export async function collect() {
     client.close();
   }
 }
+const functionLabel = new Map<string, string>(
+  services.map((s) => [s.id, s.de]),
+);
+
+const secondsFormat = new Intl.NumberFormat("de-AT", {
+  maximumFractionDigits: 1,
+});
+
+/** Zahlen für den Betreiber: wie viel Verkehr, wie viele Fehler oder langsame Antworten. */
+function trafficDetail(v: FunctionVerdict) {
+  if (v.slow) {
+    const typical = v.slow.medianMs
+      ? `, typisch ${Math.round(v.slow.medianMs)} ms`
+      : "";
+    return `${Math.round(v.slow.total)} Anfragen in 10 Min. auf ${v.slow.route}, davon ${Math.round(v.slow.slow)} langsamer als ${secondsFormat.format(SLOW_SECONDS)} s (${Math.round(v.slow.share * 100)} %)${typical}. Das gilt schon im zweiten Zeitraum hintereinander.`;
+  }
+  return `${Math.round(v.errors)} von ${Math.round(v.requests)} Anfragen in 10 Min. mit Fehler`;
+}
+
+/** Verkehrsurteile als Betreibersignale, mit einem Satz für eine mögliche Meldung. */
+function trafficSignals(
+  traffic: Awaited<ReturnType<typeof readTraffic>>,
+): SignalReading[] {
+  if (!traffic) return [];
+  return Object.entries(traffic).map(([id, v]) => {
+    const name = functionLabel.get(id) ?? id;
+    const level =
+      v.state === "down" ? "down" : v.state === "degraded" ? "degraded" : null;
+    return {
+      id: `traffic:${id}`,
+      label: `Nutzerverkehr · ${name}`,
+      level,
+      detail: level ? trafficDetail(v) : undefined,
+      draft: level ? draftFor(name, level) : undefined,
+      // Schon von `hold` bestätigt; der Betreiber erfährt es gleichzeitig mit der Seite.
+      confirm: 1,
+    };
+  });
+}
+
+/** Je Bundesland ein Signal; ohne Grafana keines, statt eines erfundenen „alles gut“. */
+function realtimeSignals(gaps: string[] | null): SignalReading[] {
+  if (!gaps) return [];
+  return Object.entries(REGION_NAMES).map(([id, name]) => {
+    const missing = gaps.includes(id);
+    return {
+      id: `realtime:${id}`,
+      label: `Echtzeit ${name}`,
+      level: missing ? "degraded" : null,
+      detail: missing
+        ? "Deutlich weniger Abfahrten mit Echtzeit als zur selben Zeit vor einer Woche"
+        : undefined,
+      draft: missing
+        ? `${name}: Bei vielen Fahrten fehlen gerade Echtzeitdaten. Angezeigt wird der Fahrplan.`
+        : undefined,
+      confirm: 1,
+    };
+  });
+}
+
+function draftFor(name: string, level: "down" | "degraded") {
+  return level === "down"
+    ? `${name}: gerade nicht verfügbar. Wir sehen, dass Anfragen fehlschlagen, und arbeiten daran.`
+    : `${name}: eingeschränkt. Ein Teil der Anfragen schlägt fehl oder dauert länger als sonst.`;
+}
+
 export function startCollector() {
   if (started || process.env.OEFFIGO_COLLECTOR !== "true") return;
   started = true;
@@ -140,7 +232,10 @@ const HISTORY_FRESH_MS: Record<Range, number> = {
   "90d": 300_000,
 };
 const HISTORY_STALE_MS = 30 * 60_000;
-const histories = new Map<Range, { at: number; history: StatusData["history"] }>();
+const histories = new Map<
+  Range,
+  { at: number; history: StatusData["history"] }
+>();
 const historyLoads = new Map<Range, Promise<StatusData["history"]>>();
 
 function loadHistory(range: Range): Promise<StatusData["history"]> {
@@ -180,7 +275,8 @@ let snapshotLoad: Promise<Snapshot> | null = null;
 let snapshotCache: { at: number; snapshot: Snapshot } | null = null;
 
 async function latestSnapshot(): Promise<Snapshot> {
-  if (snapshotCache && Date.now() - snapshotCache.at < 5_000) return snapshotCache.snapshot;
+  if (snapshotCache && Date.now() - snapshotCache.at < 5_000)
+    return snapshotCache.snapshot;
   snapshotLoad ??= (async () => {
     const client = database();
     const now = Date.now();
@@ -196,11 +292,25 @@ async function latestSnapshot(): Promise<Snapshot> {
     } finally {
       client.close();
     }
-  })().finally(() => { snapshotLoad = null; });
+  })().finally(() => {
+    snapshotLoad = null;
+  });
   return snapshotLoad;
 }
 
 export async function readStatus(range: Range = "24h"): Promise<StatusData> {
-  const [snapshot, history] = await Promise.all([latestSnapshot(), historyFor(range)]);
+  const [snapshot, history] = await Promise.all([
+    latestSnapshot(),
+    historyFor(range),
+  ]);
   return { snapshot: expireSnapshot(snapshot), history };
+}
+
+/**
+ * Für den Wächter von außen: Alter der jüngsten gespeicherten Messung. Steht
+ * der Collector, merkt das sonst niemand, weil er selbst die Alarme schickt.
+ */
+export async function lastCheckAge(now = Date.now()): Promise<number> {
+  const at = Date.parse((await latestSnapshot()).checkedAt);
+  return Number.isFinite(at) ? Math.max(0, now - at) : Number.POSITIVE_INFINITY;
 }

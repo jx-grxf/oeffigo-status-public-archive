@@ -1,4 +1,4 @@
-import type { ServiceState, Snapshot } from "./model";
+import type { CauseKey, ServiceState, Snapshot } from "./model";
 
 // Atlassian-Statuspage-Formel: Vollausfall zählt ganz, Teilausfall zu 30 %,
 // „Eingeschränkt“ gar nicht. Unbestätigte und pausierte Minuten gelten nicht als gemessen.
@@ -101,6 +101,96 @@ export function minuteLevels(
     result.set(id, minutes);
   }
   return result;
+}
+
+/** Minuten je Ursache in einem Zeitfenster, dazu die betroffenen Bundesländer. */
+export type CauseMinutes = Partial<Record<CauseKey, number>>;
+export type Causes = { minutes: CauseMinutes; regions: string[] };
+type MinuteCause = { causes: Set<CauseKey>; regions: Set<string> };
+
+/**
+ * Minute → Ursachen je Funktion, nur für eingeschränkte und unterbrochene
+ * Minuten. Die Minuten vor einer bestätigten Unterbrechung gelten rückwirkend
+ * als unerreichbar, wie bei `minuteLevels`.
+ */
+export function minuteCauses(
+  samples: readonly Snapshot[],
+  serviceIds: readonly string[],
+): Map<string, Map<number, MinuteCause>> {
+  const ordered = samples.toSorted(
+    (a, b) => Date.parse(a.checkedAt) - Date.parse(b.checkedAt),
+  );
+  const result = new Map<string, Map<number, MinuteCause>>();
+  for (const id of serviceIds) {
+    const seq = ordered.map((sample) => {
+      const reading = sample.services.find((s) => s.id === id);
+      const state: ServiceState = reading?.state ?? "unknown";
+      const probe = id === "website" ? sample.website : sample.api;
+      return {
+        minute: Math.floor(Date.parse(sample.checkedAt) / 60_000),
+        state,
+        failed: state === "unknown" && probe === "unknown",
+        causes: new Set<CauseKey>(
+          state === "degraded" || state === "down"
+            ? (reading?.causes ?? [])
+            : [],
+        ),
+        regions: reading?.realtimeGaps ?? [],
+      };
+    });
+    for (let i = 0; i < seq.length; i++) {
+      if (seq[i].state !== "down") continue;
+      for (
+        let j = i - 1;
+        j >= 0 && seq[j].failed && seq[i].minute - seq[j].minute <= 5;
+        j--
+      )
+        seq[j].causes.add("unreachable");
+    }
+    const minutes = new Map<number, MinuteCause>();
+    for (const { minute, causes, regions } of seq) {
+      if (causes.size === 0) continue;
+      const entry = minutes.get(minute) ?? {
+        causes: new Set<CauseKey>(),
+        regions: new Set<string>(),
+      };
+      for (const c of causes) entry.causes.add(c);
+      if (causes.has("realtime")) for (const r of regions) entry.regions.add(r);
+      minutes.set(minute, entry);
+    }
+    result.set(id, minutes);
+  }
+  return result;
+}
+
+/** Zählt die Ursachen eines Zeitfensters; `null`, wenn es keine gibt. */
+export function countCauses(
+  minutes: ReadonlyMap<number, MinuteCause> | undefined,
+  from: number,
+  to: number,
+): Causes | null {
+  const counts: CauseMinutes = {};
+  const regions = new Set<string>();
+  for (let m = Math.ceil(from / 60_000); m * 60_000 < to; m++) {
+    const entry = minutes?.get(m);
+    if (!entry) continue;
+    for (const cause of entry.causes) counts[cause] = (counts[cause] ?? 0) + 1;
+    for (const r of entry.regions) regions.add(r);
+  }
+  return Object.keys(counts).length
+    ? { minutes: counts, regions: [...regions].toSorted() }
+    : null;
+}
+
+export function addCauses(a: Causes | undefined, b: Causes | undefined) {
+  if (!a || !b) return a ?? b;
+  const minutes: CauseMinutes = { ...a.minutes };
+  for (const [k, v] of Object.entries(b.minutes))
+    minutes[k as CauseKey] = (minutes[k as CauseKey] ?? 0) + (v ?? 0);
+  return {
+    minutes,
+    regions: [...new Set([...a.regions, ...b.regions])].toSorted(),
+  };
 }
 
 /** Minutes per level for one service in [from, to). */
@@ -254,6 +344,8 @@ export type Bucket = {
   end: string;
   counts: MinuteCounts;
   level: Level;
+  /** Warum der Abschnitt nicht grün war; fehlt ohne Aufzeichnung (ältere Messungen). */
+  causes?: Causes;
 };
 export type RangeHistory = {
   range: Range;
@@ -266,7 +358,12 @@ export type RangeHistory = {
 /** Sum 30-minute slots into the range's buckets for every service. */
 export function buildRange(
   range: Range,
-  slots: readonly { start: number; service: string; counts: MinuteCounts }[],
+  slots: readonly {
+    start: number;
+    service: string;
+    counts: MinuteCounts;
+    causes?: Causes;
+  }[],
   now: number,
   serviceIds: readonly string[],
 ): RangeHistory {
@@ -282,9 +379,12 @@ export function buildRange(
     let total = emptyCounts();
     buckets[id] = bounds.map(([start, end]) => {
       let counts = emptyCounts();
+      let causes: Causes | undefined;
       for (const slot of own)
-        if (slot.start >= start && slot.start < end)
+        if (slot.start >= start && slot.start < end) {
           counts = addCounts(counts, slot.counts);
+          causes = addCauses(causes, slot.causes);
+        }
       total = addCounts(total, counts);
       const expected = Math.max(
         0,
@@ -295,6 +395,7 @@ export function buildRange(
         end: new Date(end).toISOString(),
         counts,
         level: bucketLevel(counts, expected),
+        ...(causes ? { causes } : {}),
       };
     });
     // A mostly paused function would otherwise get a percentage from a handful of minutes.

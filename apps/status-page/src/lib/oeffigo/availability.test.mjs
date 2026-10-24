@@ -5,9 +5,11 @@ import {
   bucketBounds,
   bucketLevel,
   buildRange,
+  countCauses,
   countMinutes,
   emptyCounts,
   manualIntervals,
+  minuteCauses,
   minuteLevels,
   uptime,
   viennaDayStart,
@@ -233,4 +235,72 @@ test("a mostly paused function gets no percentage from a few measured minutes", 
     });
   }
   assert.equal(buildRange("24h", slots, now, ids).uptime.estimates, null);
+});
+
+const withCauses = (minute, state, causes, realtimeGaps) => {
+  const base = sample(minute, { state });
+  return {
+    ...base,
+    services: base.services.map((s) =>
+      s.id === "planning" ? { ...s, causes, realtimeGaps } : s,
+    ),
+  };
+};
+
+test("causes are counted per minute for degraded and down minutes only", () => {
+  const samples = [
+    withCauses(0, "operational", ["slow"]),
+    withCauses(1, "degraded", ["slow"]),
+    withCauses(2, "degraded", ["slow", "errors"]),
+    withCauses(3, "degraded", ["realtime"], ["wien", "tirol"]),
+  ];
+  const minutes = minuteCauses(samples, ids).get("planning");
+  const slot = countCauses(minutes, t0, t0 + 30 * 60_000);
+  assert.deepEqual(slot, {
+    minutes: { slow: 2, errors: 1, realtime: 1 },
+    regions: ["tirol", "wien"],
+  });
+  assert.equal(
+    countCauses(minuteCauses([sample(0)], ids).get("planning"), t0, t0 + 3e5),
+    null,
+  );
+});
+
+test("minutes before a confirmed outage are unreachable", () => {
+  const samples = [
+    sample(0),
+    sample(1, { api: "unknown", state: "unknown" }),
+    sample(2, { api: "unknown", state: "unknown" }),
+    withCauses(3, "down", undefined),
+  ];
+  samples[3].api = "down";
+  const minutes = minuteCauses(samples, ids).get("planning");
+  const slot = countCauses(minutes, t0, t0 + 30 * 60_000);
+  assert.deepEqual(slot.minutes, { unreachable: 2 });
+});
+
+test("a bucket carries the summed causes of its slots", () => {
+  const slot = (start, causes) => ({
+    start,
+    service: "planning",
+    counts: { ...emptyCounts(), degraded: 12, operational: 18 },
+    causes,
+  });
+  const half = Math.floor(t0 / 1_800_000) * 1_800_000;
+  const range = buildRange(
+    "24h",
+    [
+      slot(half, { minutes: { slow: 10 }, regions: [] }),
+      slot(half - 1_800_000, { minutes: { slow: 2, errors: 1 }, regions: [] }),
+    ],
+    half + 1_700_000,
+    ids,
+  );
+  const withCause = range.buckets.planning.filter((b) => b.causes);
+  assert.equal(withCause.length, 2);
+  assert.deepEqual(withCause[1].causes.minutes, { slow: 10 });
+  assert.equal(
+    range.buckets.map?.every((b) => !b.causes),
+    true,
+  );
 });

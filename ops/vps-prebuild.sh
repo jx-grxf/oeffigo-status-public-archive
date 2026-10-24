@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds the dashboard and status-page images for jg-vps on this Mac and hands them over
-# by SSH. jg-vps needs 20+ minutes per Next.js build under its 3 GB builder cap and ran out
-# of memory on 21.10.; here it takes minutes (amd64 through Rosetta in OrbStack).
+# Builds the dashboard and status-page images for jg-vps and hands them over by SSH. Runs on
+# GitHub's Linux runner (vps-prebuild.yml). jg-vps needs 20+ minutes per Next.js build under
+# its 3 GB builder cap and ran out of memory on 21.10., so it never builds them itself.
 #
 # The key may only run jg-prebuild-receive on the host (authorized_keys `command=`), so this
 # script can announce a build, load an image and read what it needs, nothing else. If it
-# fails or the Mac is off, jg-deploy builds on the host after its wait (PREBUILD_WAIT).
+# fails, jg-deploy keeps the running version and reports it by Telegram.
 #
 #   ops/vps-prebuild.sh            builds HEAD
 set -euo pipefail
@@ -36,7 +36,7 @@ targets=()
 grep -Eq "$(field watch_dashboard)" <<<"$changed" && targets+=(dashboard)
 grep -Eq "$(field watch_status_page)" <<<"$changed" && targets+=(status-page)
 if [ ${#targets[@]} -eq 0 ]; then
-  echo "nothing for the Mac to build between ${deployed:0:7} and ${sha:0:7}"
+  echo "nothing to build between ${deployed:0:7} and ${sha:0:7}"
   exit 0
 fi
 
@@ -54,6 +54,7 @@ for svc in "${targets[@]}"; do
     -f "ops/$svc.Dockerfile" \
     --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY="$site_key" \
     --build-arg SOURCE_COMMIT_SHA="$sha" \
+    ${ACTIONS_RUNTIME_TOKEN:+--cache-from "type=gha,scope=$svc" --cache-to "type=gha,scope=$svc,mode=max"} \
     -t "$tag" .
   echo "sending $svc"
   docker save "$tag" | gzip -1 | vps load "$tag"

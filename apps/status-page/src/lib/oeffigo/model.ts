@@ -114,9 +114,12 @@ export const services = [
 ] as const;
 
 const componentSchema = z.object({ id: z.string(), status: stateSchema });
+// Der Router kennt zusätzlich „standby“; ein unbekannter Wert macht den Bericht nicht ungültig.
+const routerSchema = z.object({ id: z.string(), status: z.string() });
 export const reportSchema = z.object({
   generatedAt: z.iso.datetime(),
   components: z.array(componentSchema),
+  router: z.array(routerSchema).optional(),
   predictionDelivery: z
     .object({
       state: z.enum(["disabled", "idle", "healthy", "degraded"]),
@@ -128,12 +131,30 @@ export const reportSchema = z.object({
 /** Why a neutral reading is neutral; never attached to a confirmed state. */
 export type ServiceNote = "no_demand" | "sparse_data" | "in_development";
 export type ServiceScope = "positions_paused" | "wien_only";
+/**
+ * Warum eine Funktion eingeschränkt oder unterbrochen ist, in Kategorien, die
+ * ein Besucher versteht. Keine Routen, keine Anbieter. Wird je Minute gespeichert
+ * und beschriftet die gelben und roten Balken.
+ */
+export const causeKeys = [
+  "unreachable",
+  "errors",
+  "slow",
+  "realtime",
+  "report",
+] as const;
+export type CauseKey = (typeof causeKeys)[number];
 export type ServiceReading = {
   id: string;
   state: ServiceState;
   note?: ServiceNote;
   scope?: ServiceScope;
+  /** Bundesländer, in denen gerade deutlich weniger Echtzeit ankommt als sonst. */
+  realtimeGaps?: string[];
+  /** Nur bei eingeschränkt oder unterbrochen; fehlt in Messungen vor dem 23.10.2026. */
+  causes?: CauseKey[];
 };
+export type SourceReading = { id: string; state: ServiceState };
 export type Snapshot = {
   checkedAt: string;
   generatedAt: string | null;
@@ -143,6 +164,8 @@ export type Snapshot = {
   latencyMs: number | null;
   services: ServiceReading[];
   viennaRealtime: ServiceState;
+  /** Datenquellen mit öffentlichem Namen; fehlt in Messungen vor dem 23.10.2026. */
+  sources?: SourceReading[];
 };
 export const MAX_AGE_MS = 180_000;
 const rank: Record<ServiceState, number> = {
@@ -176,8 +199,18 @@ export function projectReport(
     report?.components.map((c) => [c.id, c.status]) ?? [],
   );
   const readings: ServiceReading[] = services.map((service) => {
-    if (service.id === "website") return { id: service.id, state: website };
-    if (api === "down") return { id: service.id, state: "down" };
+    if (service.id === "website")
+      return {
+        id: service.id,
+        state: website,
+        ...(website === "down" ? { causes: ["unreachable" as const] } : {}),
+      };
+    if (api === "down")
+      return {
+        id: service.id,
+        state: "down",
+        causes: ["unreachable" as const],
+      };
     if (stale || api !== "operational")
       return { id: service.id, state: "unknown" };
     let state = worst(
@@ -208,18 +241,40 @@ export function projectReport(
               : "unknown";
       state = worst([state, deliveryState]);
     }
+    const causes =
+      state === "degraded" || state === "down"
+        ? { causes: ["report" as const] }
+        : {};
     if (
       service.id === "positions" &&
       components.get("vehicle_positions") === "paused"
     )
-      return { id: service.id, state, scope: "positions_paused" };
+      return { id: service.id, state, scope: "positions_paused", ...causes };
     if (
       service.id === "alerts" &&
       components.get("disruption_search") === "degraded"
     )
-      return { id: service.id, state, scope: "wien_only" };
-    return { id: service.id, state };
+      return { id: service.id, state, scope: "wien_only", ...causes };
+    return { id: service.id, state, ...causes };
   });
+  const known = !stale && api === "operational";
+  const router = new Map(report?.router?.map((r) => [r.id, r.status]) ?? []);
+  const fromRouter = (id: string): ServiceState => {
+    const status = router.get(id);
+    if (status === "standby") return "paused";
+    const parsed = stateSchema.safeParse(status);
+    return parsed.success ? parsed.data : "unknown";
+  };
+  const sources: SourceReading[] = [
+    { id: "vao", state: fromRouter("vao") },
+    {
+      id: "wiener-linien",
+      state: components.get("wiener_linien") ?? "unknown",
+    },
+    { id: "verbund-linie", state: fromRouter("trias") },
+    { id: "mvo", state: components.get("disruption_search") ?? "unknown" },
+    { id: "oebb", state: fromRouter("mgate") },
+  ].map((s) => (known ? s : { ...s, state: "unknown" as const }));
   return {
     checkedAt: new Date(now).toISOString(),
     generatedAt: report?.generatedAt ?? null,
@@ -227,12 +282,84 @@ export function projectReport(
     api,
     website,
     latencyMs,
+    sources,
     services: readings,
     viennaRealtime: stale
       ? "unknown"
       : (components.get("wiener_linien") ?? "unknown"),
   };
 }
+/**
+ * Echter Verkehr verschlechtert eine gemessene Funktion, er macht nie eine
+ * ruhende oder unbestätigte grün. `verdicts` kommt aus `readTraffic`.
+ */
+export function applyTraffic(
+  snapshot: Snapshot,
+  verdicts: Record<
+    string,
+    { state: ServiceState | null; slow?: unknown }
+  > | null,
+): Snapshot {
+  if (!verdicts || snapshot.stale) return snapshot;
+  return {
+    ...snapshot,
+    services: snapshot.services.map((s) => {
+      const verdict = verdicts[s.id];
+      const seen = verdict?.state;
+      if (!seen || s.state === "paused" || s.state === "unknown") return s;
+      const state = worst([s.state, seen]);
+      const cause: CauseKey = verdict.slow ? "slow" : "errors";
+      if (state === s.state) return withCause(s, state, cause);
+      return { id: s.id, state, causes: [cause] };
+    }),
+  };
+}
+
+/** Eine Ursache gehört dazu, solange sie so schlimm ist wie der gezeigte Zustand. */
+function withCause(
+  reading: ServiceReading,
+  state: ServiceState,
+  cause: CauseKey,
+): ServiceReading {
+  if (state !== "degraded" && state !== "down") return reading;
+  const causes = reading.causes ?? [];
+  return causes.includes(cause)
+    ? reading
+    : { ...reading, causes: [...causes, cause] };
+}
+
+/**
+ * Fehlt in einem Bundesland Echtzeit, werden Abfahrten eingeschränkt und
+ * nennen es; ganz Österreich wird deshalb nicht rot. Eine Datenquelle wird
+ * dabei nicht eingefärbt: Die Wirkung sagt nicht, wer sie verursacht.
+ * `regions` aus `readRealtimeGaps`.
+ */
+export function applyRealtimeGaps(
+  snapshot: Snapshot,
+  regions: readonly string[] | null,
+): Snapshot {
+  if (!regions?.length || snapshot.stale) return snapshot;
+  return {
+    ...snapshot,
+    services: snapshot.services.map((s) => {
+      if (
+        s.id !== "departures" ||
+        s.state === "unknown" ||
+        s.state === "paused"
+      )
+        return s;
+      const state = worst([s.state, "degraded"]);
+      const next: ServiceReading = {
+        ...s,
+        state,
+        realtimeGaps: [...regions],
+      };
+      if (state === s.state) return withCause(next, state, "realtime");
+      return { ...next, causes: ["realtime"] };
+    }),
+  };
+}
+
 /**
  * Report age is judged once, at check time, by `projectReport`. Re-judging it
  * at display time stacked collector, cache and polling delays on top and
@@ -249,6 +376,7 @@ export function expireSnapshot(snapshot: Snapshot, now = Date.now()): Snapshot {
     website: "unknown",
     services: snapshot.services.map((s) => ({ id: s.id, state: "unknown" })),
     viennaRealtime: "unknown",
+    sources: snapshot.sources?.map((s) => ({ id: s.id, state: "unknown" })),
   };
 }
 
@@ -320,13 +448,23 @@ export function mergeManualStatus(
           ? reading?.note
           : undefined,
       scope: impact === "down" ? undefined : reading?.scope,
+      realtimeGaps: impact === "down" ? undefined : reading?.realtimeGaps,
     };
   });
+  // Eine bewusst pausierte Funktion färbt die Gesamtlage nicht; echte Wartung schon.
+  const active = readings.filter(
+    (s) => !(s.state === "paused" && !s.maintenance),
+  );
   return {
     snapshot: current,
     services: readings,
-    overall: worst(readings.map((s) => s.state)),
+    overall: active.length ? worst(active.map((s) => s.state)) : "paused",
   };
+}
+
+/** Bewusst pausiert, nicht in Wartung: Die Funktion ist ausgeschaltet, nichts ist kaputt. */
+export function isPaused(s: Pick<MergedService, "state" | "maintenance">) {
+  return s.state === "paused" && !s.maintenance;
 }
 
 export type MergedStatus = ReturnType<typeof mergeManualStatus>;
@@ -340,7 +478,11 @@ export type Headline =
   | "degraded"
   | "down";
 
-/** Neutral readings with a known reason do not turn the page headline grey. */
+/**
+ * Neutral readings with a known reason do not turn the page headline grey.
+ * Paused functions are left out: "Alles in Betrieb" means everything that is
+ * switched on works.
+ */
 export function headline(
   readings: readonly Pick<MergedService, "state" | "maintenance" | "note">[],
 ): Headline {
@@ -349,7 +491,9 @@ export function headline(
   if (readings.some((s) => s.maintenance)) return "maintenance";
   if (readings.some((s) => s.state === "unknown" && !s.note))
     return "unconfirmed";
-  return readings.every((s) => s.state === "operational")
+  return readings
+    .filter((s) => !isPaused(s))
+    .every((s) => s.state === "operational")
     ? "operational"
     : "no_known_issues";
 }
@@ -380,6 +524,17 @@ export function serviceIndicator(state: ServiceState) {
     case "unknown":
       return { indicator: "unknown", description: "Status Not Confirmed" };
   }
+}
+
+/**
+ * Statuswert einer Funktion im JSON-Feed für den ÖffiGo-Server. Anders als
+ * `serviceComponentStatus` trennt er „pausiert“ von „Wartung“.
+ */
+export function feedComponentStatus(
+  service: Pick<MergedService, "state" | "maintenance">,
+): string {
+  if (isPaused(service)) return "paused";
+  return serviceComponentStatus(service.state);
 }
 
 export function serviceComponentStatus(state: ServiceState): string {

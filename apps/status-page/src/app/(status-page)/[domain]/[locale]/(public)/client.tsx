@@ -11,7 +11,12 @@ import type {
 import { statusColors } from "@openstatus/ui/components/blocks/status.utils";
 import { Skeleton } from "@openstatus/ui/components/ui/skeleton";
 import { cn } from "@openstatus/ui/lib/utils";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { ChevronRight } from "lucide-react";
 import { useLocale } from "next-intl";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -29,6 +34,13 @@ import {
   ranges,
 } from "../../../../../lib/oeffigo/availability";
 import {
+  type GroupId,
+  type SourceRow,
+  REGION_NAMES,
+  serviceGroups,
+  sourceRows,
+} from "../../../../../lib/oeffigo/groups";
+import {
   localizeMaintenance,
   localizeReport,
 } from "../../../../../lib/oeffigo/incident-copy";
@@ -42,12 +54,17 @@ import {
   type MergedService,
   type ServiceState,
   type StatusData,
+  worst,
 } from "../../../../../lib/oeffigo/model";
+import type { Preview } from "../../../../../lib/oeffigo/preview";
+import { railHtml } from "../../../../../lib/oeffigo/rail";
 import { useEnglishCopy } from "../../../../../lib/oeffigo/use-english-copy";
 import { formatDateRange } from "../../../../../lib/oeffigo/vienna-time";
 import { updatesWithImpactChanges } from "../../../../../lib/report-impacts";
 import { useTRPC } from "../../../../../lib/trpc/client";
 import { OutsideSection } from "./outside-section";
+
+import "../../../../../lib/oeffigo/rail.css";
 
 type Locale = "de" | "en";
 
@@ -93,10 +110,10 @@ const copy = {
           ? `1 von ${n} Funktionen konnte zuletzt nicht bestätigt werden.`
           : `${open} von ${n} Funktionen konnten zuletzt nicht bestätigt werden.`,
       maintenance: (names: string) => `Geplante Arbeiten betreffen ${names}.`,
-      affected: (count: number, n: number) =>
-        count === 1
-          ? `1 von ${n} Funktionen ist betroffen.`
-          : `${count} von ${n} Funktionen sind betroffen.`,
+      affected: (names: string | null) =>
+        names
+          ? `Betroffen sind ${names}. Die anderen Funktionen laufen normal.`
+          : "Die anderen Funktionen laufen normal.",
       seeReport: "Was wir wissen, steht in der Meldung darunter.",
       unavailable:
         "Die Messdaten sind gerade nicht erreichbar. Veröffentlichte Meldungen siehst du trotzdem.",
@@ -107,6 +124,13 @@ const copy = {
     vienna:
       "Echtzeitdaten in Wien sind eingeschränkt. Fahrplanzeiten und andere Regionen können weiterhin verfügbar sein.",
     functions: "Funktionen",
+    sources: "Datenquellen",
+    realtimeGaps: (regions: string) =>
+      `Weniger Echtzeit als sonst: ${regions}. Dort steht oft nur der Fahrplan.`,
+    apiRow: {
+      title: "ÖffiGo-API",
+      description: "Die Schnittstelle hinter App, Website und Assistenten.",
+    },
     level: {
       operational: "Verfügbar",
       degraded: "Eingeschränkt",
@@ -149,11 +173,13 @@ const copy = {
     uptime: "Verfügbarkeit",
     noUptime: "keine Messung",
     pausedUptime: "pausiert",
+    available: "verfügbar",
     summary: {
       uptime: "Verfügbarkeit",
       uptimeHint: "Schnitt der gemessenen Funktionen",
       downtime: "Ausfallzeit",
       downtimeHint: "bestätigt, am stärksten betroffene Funktion",
+      degradedHint: (minutes: string) => `dazu ${minutes} eingeschränkt`,
       reports: "Meldungen",
       reportsHint: "im Zeitraum veröffentlicht",
       none: "–",
@@ -235,10 +261,10 @@ const copy = {
       unconfirmed: (open: number, n: number) =>
         `${open} of ${n} services could not be confirmed in the latest check.`,
       maintenance: (names: string) => `Planned work affects ${names}.`,
-      affected: (count: number, n: number) =>
-        count === 1
-          ? `1 of ${n} services is affected.`
-          : `${count} of ${n} services are affected.`,
+      affected: (names: string | null) =>
+        names
+          ? `Affected: ${names}. All other services work normally.`
+          : "All other services work normally.",
       seeReport: "What we know is in the report below.",
       unavailable:
         "Check results are unavailable right now. Published reports are still shown.",
@@ -249,6 +275,13 @@ const copy = {
     vienna:
       "Real-time information in Vienna is affected. Scheduled times and other regions may remain available.",
     functions: "Services",
+    sources: "Data sources",
+    realtimeGaps: (regions: string) =>
+      `Less real-time data than usual: ${regions}. Many trips show the timetable only.`,
+    apiRow: {
+      title: "ÖffiGo API",
+      description: "The interface behind the app, website and assistants.",
+    },
     level: {
       operational: "Available",
       degraded: "Degraded",
@@ -291,11 +324,13 @@ const copy = {
     uptime: "Availability",
     noUptime: "no measurement",
     pausedUptime: "paused",
+    available: "available",
     summary: {
       uptime: "Availability",
       uptimeHint: "average of measured services",
       downtime: "Downtime",
       downtimeHint: "confirmed, most affected service",
+      degradedHint: (minutes: string) => `plus ${minutes} degraded`,
       reports: "Reports",
       reportsHint: "published in this period",
       none: "–",
@@ -458,12 +493,19 @@ function relativeTime(locale: Locale, from: number, now: number) {
   return format.format(-Math.floor(minutes / 1440), "day");
 }
 
+function listNames(locale: Locale, names: string[]) {
+  if (names.length < 2) return names.join("");
+  return `${names.slice(0, -1).join(", ")} ${copy[locale].and} ${names.at(-1)}`;
+}
+
 function joinNames(locale: Locale, names: string[]) {
   if (names.length > 2) return copy[locale].functionsCount(names.length);
   return names.join(` ${copy[locale].and} `);
 }
 
-function stateLabel(locale: Locale, service: MergedService) {
+type Reading = Pick<MergedService, "state" | "maintenance" | "note">;
+
+function stateLabel(locale: Locale, service: Reading) {
   if (service.maintenance) return copy[locale].maintenance;
   if (
     (service.state === "unknown" || service.state === "paused") &&
@@ -479,7 +521,12 @@ function eventTone(status: StatusType) {
   return "var(--warning)";
 }
 
-export function Client() {
+export function Client({
+  preview,
+}: {
+  /** Nur /proto/seite: Testdaten statt Abfragen. */
+  preview?: Preview;
+} = {}) {
   const locale: Locale = useLocale() === "de" ? "de" : "en";
   const text = copy[locale];
   const labels = useStatusBlocksLabels();
@@ -488,9 +535,11 @@ export function Client() {
   const prefix = usePathnamePrefix();
   const now = useClock();
   const [range, setRange] = useState<Range>("24h");
+  const [opened, setOpened] = useState<Partial<Record<GroupId, boolean>>>({});
 
   const { data: page, isError: pageError } = useQuery({
     ...trpc.statusPage.get.queryOptions({ slug: domain }),
+    enabled: !preview,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
   });
@@ -506,6 +555,7 @@ export function Client() {
     queryKey: ["oeffigo-status", range],
     placeholderData: keepPreviousData,
     queryFn: () => fetchStatus(range),
+    enabled: !preview,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     retry: 1,
@@ -514,7 +564,7 @@ export function Client() {
   const queryClient = useQueryClient();
   const firstLoaded = data != null;
   useEffect(() => {
-    if (!firstLoaded) return;
+    if (!firstLoaded || preview) return;
     for (const other of ranges) {
       void queryClient.prefetchQuery({
         queryKey: ["oeffigo-status", other],
@@ -522,7 +572,7 @@ export function Client() {
         staleTime: 60_000,
       });
     }
-  }, [firstLoaded, queryClient]);
+  }, [firstLoaded, preview, queryClient]);
 
   const loading =
     now === null || (!page && !pageError) || (!data && !statusError);
@@ -544,6 +594,53 @@ export function Client() {
   const checkCurrent =
     !statusError && now !== null && now - checkedAt <= MAX_AGE_MS;
   const eventsHref = `${prefix ? `/${prefix}` : ""}/events`;
+
+  const apiReading: Reading = {
+    state: loading ? "unknown" : (snapshot?.api ?? "unknown"),
+    maintenance: false,
+    note: undefined,
+  };
+  const sources = loading ? [] : sourceRows(snapshot?.sources);
+  const groups = [
+    ...serviceGroups.map((group) => {
+      const members = group.services.flatMap((id) =>
+        services.filter((s) => s.id === id),
+      );
+      return makeGroup(
+        group.id,
+        locale === "de" ? group.de : group.en,
+        [
+          ...(group.id === "api" ? [text.apiRow.title] : []),
+          ...members.map(name),
+        ],
+        [
+          ...(group.id === "api" ? [apiReading.state] : []),
+          ...members.map((s) => s.state),
+        ],
+        members,
+        [],
+        data?.history,
+      );
+    }),
+    ...(sources.length
+      ? [
+          makeGroup(
+            "sources",
+            text.sources,
+            sources.map((s) => s.label),
+            sources.map((s) => s.state),
+            [],
+            sources,
+            undefined,
+          ),
+        ]
+      : []),
+  ];
+  // Die Schiene hat vier Halte, einen je Gruppe; ohne Datenquellen bleibt sie weg.
+  const rail =
+    !loading && groups.length === 4
+      ? railHtml(groups, { stateLabels: text.state })
+      : null;
 
   const openEvents = page?.openEvents.filter((e) => e.type !== "incident");
   const openReport = openEvents?.some((e) => e.type === "report") ?? false;
@@ -637,9 +734,11 @@ export function Client() {
         );
       case "degraded":
       case "down":
-        return `${text.lead.affected(affected.length, services.length)}${
-          openReport ? ` ${text.lead.seeReport}` : ""
-        }`;
+        // Die Überschrift fasst ab drei Funktionen zu einer Zahl zusammen; dann
+        // nennt der Satz darunter sie beim Namen.
+        return `${text.lead.affected(
+          affected.length > 2 ? listNames(locale, affected.map(name)) : null,
+        )}${openReport ? ` ${text.lead.seeReport}` : ""}`;
     }
   })();
 
@@ -696,6 +795,14 @@ export function Client() {
             </p>
           </div>
         )}
+        {rail ? (
+          <div
+            className="mt-8 sm:mt-10"
+            // eigenes Markup aus railHtml, keine Nutzereingabe
+            // oxlint-disable-next-line react/no-danger
+            dangerouslySetInnerHTML={{ __html: rail }}
+          />
+        ) : null}
       </section>
 
       {snapshot &&
@@ -790,7 +897,7 @@ export function Client() {
                     {text.maintenanceNow}
                   </span>
                   {now ? (
-                    <span className="text-muted-foreground font-mono text-xs">
+                    <span className="text-muted-foreground text-xs tabular-nums">
                       {formatTime(locale, maintenance.from)}–
                       {formatTime(locale, maintenance.to)}
                     </span>
@@ -884,63 +991,192 @@ export function Client() {
         />
         <HistoryLabels locale={locale} range={range}>
           <ul className="divide-y">
-            {services.map((service) => (
-              <li
-                key={service.id}
-                className="grid gap-x-10 gap-y-3 px-5 py-4 sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,30rem)_9rem] md:items-center"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h3 className="font-medium">{name(service)}</h3>
-                    <p className="text-muted-foreground text-sm">
-                      {locale === "de"
-                        ? service.description
-                        : service.descriptionEn}
-                    </p>
-                    {service.scope ? (
-                      <p className="text-muted-foreground mt-1 text-sm">
-                        {text.scope[service.scope]}{" "}
-                        <Link
-                          href={eventsHref}
-                          className="underline underline-offset-2"
-                        >
-                          {text.scopeMore}
-                        </Link>
-                      </p>
-                    ) : null}
-                  </div>
-                  <StateLabel
-                    className="md:hidden"
-                    loading={loading}
-                    locale={locale}
-                    service={service}
-                    uptime={data?.history.uptime[service.id]}
-                    mostlyPaused={mostlyPaused(
-                      data?.history.buckets[service.id],
+            {groups.map((group) => {
+              const open = opened[group.id] ?? group.attention;
+              const listId = `group-${group.id}`;
+              const only =
+                group.members.length === 1 && group.id !== "api"
+                  ? group.members[0]
+                  : null;
+              if (only)
+                return (
+                  <FunctionRow
+                    key={group.id}
+                    inset
+                    title={group.title}
+                    description={
+                      locale === "de" ? only.description : only.descriptionEn
+                    }
+                    state={(className) => (
+                      <StateLabel
+                        className={className}
+                        loading={loading}
+                        locale={locale}
+                        service={only}
+                        uptime={data?.history.uptime[only.id]}
+                        mostlyPaused={mostlyPaused(
+                          data?.history.buckets[only.id],
+                        )}
+                        range={range}
+                      />
                     )}
-                    range={range}
+                    history={
+                      <ServiceHistory
+                        locale={locale}
+                        range={range}
+                        buckets={data?.history.buckets[only.id]}
+                        since={data?.history.since ?? null}
+                        events={barEvents(only.componentId)}
+                      />
+                    }
                   />
-                </div>
-                <div>
-                  <ServiceHistory
-                    locale={locale}
-                    range={range}
-                    buckets={data?.history.buckets[service.id]}
-                    since={data?.history.since ?? null}
-                    events={barEvents(service.componentId)}
+                );
+              return (
+                <li key={group.id}>
+                  <GroupRow
+                    title={group.title}
+                    summary={group.summary}
+                    open={open}
+                    controls={listId}
+                    onToggle={() =>
+                      setOpened((prev) => ({ ...prev, [group.id]: !open }))
+                    }
+                    state={(className) => (
+                      <StateLabel
+                        className={className}
+                        loading={loading}
+                        locale={locale}
+                        service={{
+                          state: group.state,
+                          maintenance: false,
+                          note: undefined,
+                        }}
+                        uptime={group.uptime}
+                        mostlyPaused={false}
+                        range={range}
+                      />
+                    )}
+                    history={
+                      group.buckets ? (
+                        <ServiceHistory
+                          locale={locale}
+                          range={range}
+                          buckets={group.buckets}
+                          since={data?.history.since ?? null}
+                          events={[]}
+                        />
+                      ) : undefined
+                    }
                   />
-                </div>
-                <StateLabel
-                  className="hidden md:flex"
-                  loading={loading}
-                  locale={locale}
-                  service={service}
-                  uptime={data?.history.uptime[service.id]}
-                  mostlyPaused={mostlyPaused(data?.history.buckets[service.id])}
-                  range={range}
-                />
-              </li>
-            ))}
+                  {open ? (
+                    <ul
+                      id={listId}
+                      className="bg-muted/30 divide-y border-t [&>li]:pl-11 sm:[&>li]:pl-12"
+                    >
+                      {group.id === "api" ? (
+                        <FunctionRow
+                          title={text.apiRow.title}
+                          description={text.apiRow.description}
+                          state={(className) => (
+                            <StateLabel
+                              className={className}
+                              loading={loading}
+                              locale={locale}
+                              service={apiReading}
+                              uptime={undefined}
+                              mostlyPaused={false}
+                              range={range}
+                            />
+                          )}
+                        />
+                      ) : null}
+                      {group.members.map((service) => (
+                        <FunctionRow
+                          key={service.id}
+                          title={name(service)}
+                          description={
+                            locale === "de"
+                              ? service.description
+                              : service.descriptionEn
+                          }
+                          note={
+                            <>
+                              {service.scope ? (
+                                <p className="text-muted-foreground mt-1 text-sm">
+                                  {text.scope[service.scope]}{" "}
+                                  <Link
+                                    href={eventsHref}
+                                    className="underline underline-offset-2"
+                                  >
+                                    {text.scopeMore}
+                                  </Link>
+                                </p>
+                              ) : null}
+                              {service.realtimeGaps?.length ? (
+                                <p className="text-warning mt-1 text-sm">
+                                  {text.realtimeGaps(
+                                    joinNames(
+                                      locale,
+                                      service.realtimeGaps.map(
+                                        (r) => REGION_NAMES[r] ?? r,
+                                      ),
+                                    ),
+                                  )}
+                                </p>
+                              ) : null}
+                            </>
+                          }
+                          state={(className) => (
+                            <StateLabel
+                              className={className}
+                              loading={loading}
+                              locale={locale}
+                              service={service}
+                              uptime={data?.history.uptime[service.id]}
+                              mostlyPaused={mostlyPaused(
+                                data?.history.buckets[service.id],
+                              )}
+                              range={range}
+                            />
+                          )}
+                          history={
+                            <ServiceHistory
+                              locale={locale}
+                              range={range}
+                              buckets={data?.history.buckets[service.id]}
+                              since={data?.history.since ?? null}
+                              events={barEvents(service.componentId)}
+                            />
+                          }
+                        />
+                      ))}
+                      {group.sources.map((row) => (
+                        <FunctionRow
+                          key={row.id}
+                          title={row.label}
+                          description={row.description}
+                          state={(className) => (
+                            <StateLabel
+                              className={className}
+                              loading={loading}
+                              locale={locale}
+                              service={{
+                                state: row.state,
+                                maintenance: false,
+                                note: undefined,
+                              }}
+                              uptime={undefined}
+                              mostlyPaused={false}
+                              range={range}
+                            />
+                          )}
+                        />
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </HistoryLabels>
         <div className="text-muted-foreground grid gap-x-10 gap-y-2 border-t px-5 py-3 text-xs sm:px-6 md:grid-cols-[minmax(0,1fr)_minmax(16rem,30rem)_9rem]">
@@ -950,7 +1186,7 @@ export function Client() {
               ? text.historySince(formatDay(locale, new Date(historyStart)))
               : null}
           </p>
-          <div className="order-1 flex justify-between font-mono md:order-2">
+          <div className="order-1 flex justify-between tabular-nums md:order-2">
             <span>{text.rangeStart[range]}</span>
             <span>{text.now}</span>
           </div>
@@ -1056,6 +1292,170 @@ export function Client() {
   );
 }
 
+const levelRank: Record<Level, number> = {
+  operational: 0,
+  paused: 1,
+  unknown: 2,
+  degraded: 3,
+  partial: 4,
+  down: 5,
+};
+
+/** Eine ruhende Funktion färbt ihre Gruppe nicht, solange andere gemessen werden. */
+function groupState(states: readonly ServiceState[]): ServiceState {
+  const active = states.filter((s) => s !== "paused");
+  return active.length ? worst(active) : "paused";
+}
+
+/** Je Abschnitt der schlechteste Balken der Gruppe, mit dessen Minuten. */
+function groupBuckets(lists: readonly (Bucket[] | undefined)[]) {
+  const present = lists.filter((l): l is Bucket[] => !!l?.length);
+  const active = present.filter((l) => !mostlyPaused(l));
+  const use = active.length ? active : present;
+  if (!use.length) return undefined;
+  return use[0].map((_, i) =>
+    use
+      .map((l) => l[i])
+      .reduce((a, b) => (levelRank[b.level] > levelRank[a.level] ? b : a)),
+  );
+}
+
+function makeGroup(
+  id: GroupId,
+  title: string,
+  memberNames: string[],
+  states: ServiceState[],
+  members: MergedService[],
+  sources: SourceRow[],
+  history: StatusData["history"] | undefined,
+) {
+  const state = groupState(states);
+  const uptimes = members
+    .map((m) => history?.uptime[m.id])
+    .filter((v): v is number => typeof v === "number");
+  return {
+    id,
+    title,
+    summary: memberNames.join(" · "),
+    state,
+    attention: state === "degraded" || state === "down",
+    uptime: members.length
+      ? uptimes.length
+        ? uptimes.reduce((a, b) => a + b, 0) / uptimes.length
+        : history
+          ? null
+          : undefined
+      : undefined,
+    buckets: members.length
+      ? groupBuckets(members.map((m) => history?.buckets[m.id]))
+      : undefined,
+    members,
+    sources,
+  };
+}
+
+function GroupRow({
+  title,
+  summary,
+  open,
+  controls,
+  onToggle,
+  state,
+  history,
+}: {
+  title: string;
+  summary: string;
+  open: boolean;
+  controls: string;
+  onToggle: () => void;
+  state: (className: string) => React.ReactNode;
+  history?: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid gap-x-10 gap-y-3 px-5 py-4 sm:px-6 md:items-center",
+        history
+          ? "md:grid-cols-[minmax(0,1fr)_minmax(16rem,30rem)_9rem]"
+          : "md:grid-cols-[minmax(0,1fr)_9rem]",
+      )}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-controls={controls}
+          className="group/toggle focus-visible:ring-ring -m-1 flex min-w-0 flex-1 items-start gap-2 rounded-md p-1 text-left focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              "text-muted-foreground mt-1 size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
+              open && "rotate-90",
+            )}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold group-hover/toggle:underline group-hover/toggle:underline-offset-4">
+              {title}
+            </span>
+            {/* Eine Zeile: die Namen stehen beim Aufklappen ohnehin darunter. */}
+            <span
+              className="text-muted-foreground block truncate text-sm"
+              title={summary}
+            >
+              {summary}
+            </span>
+          </span>
+        </button>
+        {state("md:hidden")}
+      </div>
+      {history ? <div>{history}</div> : null}
+      {state("hidden md:flex")}
+    </div>
+  );
+}
+
+function FunctionRow({
+  inset = false,
+  title,
+  description,
+  note,
+  state,
+  history,
+}: {
+  /** Steht eine Gruppe mit nur einer Funktion als Zeile, fluchtet ihr Titel mit den Gruppentiteln. */
+  inset?: boolean;
+  title: string;
+  description: string;
+  note?: React.ReactNode;
+  state: (className: string) => React.ReactNode;
+  history?: React.ReactNode;
+}) {
+  return (
+    <li
+      className={cn(
+        "grid gap-x-10 gap-y-3 px-5 py-4 sm:px-6 md:items-center",
+        inset && "pl-11 sm:pl-12",
+        history
+          ? "md:grid-cols-[minmax(0,1fr)_minmax(16rem,30rem)_9rem]"
+          : "md:grid-cols-[minmax(0,1fr)_9rem]",
+      )}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="font-medium">{title}</h3>
+          <p className="text-muted-foreground text-sm">{description}</p>
+          {note}
+        </div>
+        {state("md:hidden")}
+      </div>
+      {history ? <div>{history}</div> : null}
+      {state("hidden md:flex")}
+    </li>
+  );
+}
+
 function StateLabel({
   className,
   loading,
@@ -1068,7 +1468,7 @@ function StateLabel({
   className?: string;
   loading: boolean;
   locale: Locale;
-  service: MergedService;
+  service: Reading;
   uptime: number | null | undefined;
   mostlyPaused: boolean;
   range: Range;
@@ -1091,13 +1491,14 @@ function StateLabel({
       >
         {stateLabel(locale, service)}
       </span>
-      {uptime === undefined ? null : (
+      {uptime === undefined ||
+      (uptime === null && mostlyPaused && service.state === "paused") ? null : (
         <span
-          className="text-muted-foreground font-mono text-xs tabular-nums"
+          className="text-muted-foreground text-xs tabular-nums"
           title={`${text.uptime} ${text.rangeLong[range]}`}
         >
           {uptime !== null
-            ? formatUptime(locale, uptime)
+            ? `${formatUptime(locale, uptime)} ${text.available}`
             : mostlyPaused
               ? text.pausedUptime
               : text.noUptime}
@@ -1134,6 +1535,14 @@ function RangeSummary({
       buckets.reduce((sum, b) => sum + b.counts.down, 0),
     ),
   );
+  // Ausfall allein ließ „0 Min." neben einer gelben Seite stehen; die
+  // eingeschränkte Zeit derselben Funktion gehört daneben.
+  const limited = Math.max(
+    0,
+    ...Object.values(history?.buckets ?? {}).map((buckets) =>
+      buckets.reduce((sum, b) => sum + b.counts.degraded + b.counts.partial, 0),
+    ),
+  );
   const items = [
     {
       label: text.summary.uptime,
@@ -1144,7 +1553,11 @@ function RangeSummary({
     {
       label: text.summary.downtime,
       value: history ? text.minutes(downtime) : text.summary.none,
-      hint: text.summary.downtimeHint,
+      hint:
+        limited > 0
+          ? text.summary.degradedHint(text.minutes(limited))
+          : text.summary.downtimeHint,
+      strong: limited > 0,
     },
     {
       label: text.summary.reports,
@@ -1160,10 +1573,17 @@ function RangeSummary({
       {items.map((item) => (
         <div key={item.label} className="px-5 py-4 sm:px-6">
           <dt className="text-muted-foreground text-xs">{item.label}</dt>
-          <dd className="mt-1 font-mono text-lg tabular-nums sm:text-2xl">
+          <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums sm:text-[1.75rem]">
             {history ? item.value : <Skeleton className="h-7 w-20" />}
           </dd>
-          <dd className="text-muted-foreground mt-0.5 hidden text-xs sm:block">
+          <dd
+            className={cn(
+              "text-muted-foreground mt-0.5 text-xs",
+              "strong" in item && item.strong
+                ? "text-warning block"
+                : "hidden sm:block",
+            )}
+          >
             {item.hint}
           </dd>
         </div>
@@ -1195,7 +1615,7 @@ function RangePicker({
           aria-pressed={value === range}
           onClick={() => onChange(range)}
           className={cn(
-            "rounded-md px-3 py-1 font-mono text-xs tabular-nums transition-colors",
+            "rounded-md px-3 py-1 text-xs font-medium tabular-nums transition-colors",
             value === range
               ? "bg-background text-foreground shadow-xs"
               : "text-muted-foreground hover:text-foreground",
@@ -1353,7 +1773,7 @@ function ServiceHistory({
                 />
                 {label}
               </span>
-              <span className="text-muted-foreground ml-auto font-mono text-xs">
+              <span className="text-muted-foreground ml-auto text-xs tabular-nums">
                 {value}
               </span>
             </div>
@@ -1365,7 +1785,9 @@ function ServiceHistory({
 }
 
 async function fetchStatus(range: Range): Promise<StatusData> {
-  const response = await fetch(`/api/oeffigo?range=${range}`, { cache: "no-store" });
+  const response = await fetch(`/api/oeffigo?range=${range}`, {
+    cache: "no-store",
+  });
   if (!response.ok) throw new Error("status_unavailable");
   return response.json();
 }

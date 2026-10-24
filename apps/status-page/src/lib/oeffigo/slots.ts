@@ -2,11 +2,14 @@ import type { Client } from "@libsql/client";
 
 import {
   buildRange,
+  type Causes,
+  countCauses,
   countMinutes,
   type Impact,
   levels,
   type ManualInterval,
   manualIntervals,
+  minuteCauses,
   minuteLevels,
   type MinuteCounts,
   type Range,
@@ -16,6 +19,20 @@ import {
 import { services, type Snapshot } from "./model";
 
 const ids = services.map((s) => s.id);
+const CAUSE_TABLE =
+  "CREATE TABLE IF NOT EXISTS oeffigo_slot_cause (slot_start INTEGER NOT NULL, service TEXT NOT NULL, causes TEXT NOT NULL, PRIMARY KEY (slot_start, service))";
+let causeTable = false;
+// Die Tabelle entsteht beim ersten Lauf selbst; ohne sie fehlen nur die Ursachen, nie der Verlauf.
+async function ensureCauseTable(client: Client) {
+  if (causeTable) return true;
+  try {
+    await client.execute(CAUSE_TABLE);
+    causeTable = true;
+  } catch {
+    console.error("ÖffiGo cause table could not be created");
+  }
+  return causeTable;
+}
 const serviceOfComponent = new Map<number, string>(
   services.map((s) => [s.componentId, s.id]),
 );
@@ -106,16 +123,29 @@ export async function rollupSlots(
     }
   }
   const minutes = minuteLevels(samples, ids);
+  const causes = minuteCauses(samples, ids);
   const manual = await readManual(client, now);
   const manualBy = new Map<string, ManualInterval[]>();
   for (const interval of manual) {
     const id = serviceOfComponent.get(interval.componentId);
     if (id) manualBy.set(id, [...(manualBy.get(id) ?? []), interval]);
   }
+  const withCauses = await ensureCauseTable(client);
   const statements = [];
+  if (withCauses)
+    statements.push({
+      sql: "DELETE FROM oeffigo_slot_cause WHERE slot_start >= ? AND slot_start < ?",
+      args: [first, Math.min(to, now)],
+    });
   for (let start = first; start < Math.min(to, now); start += SLOT_MS) {
     const end = Math.min(start + SLOT_MS, now);
     for (const id of ids) {
+      const why = withCauses ? countCauses(causes.get(id), start, end) : null;
+      if (why)
+        statements.push({
+          sql: "INSERT INTO oeffigo_slot_cause (slot_start, service, causes) VALUES (?, ?, ?)",
+          args: [start, id, JSON.stringify(why)],
+        });
       const c = countMinutes(
         minutes.get(id),
         manualBy.get(id) ?? [],
@@ -143,7 +173,7 @@ export async function rollupSlots(
     }
   }
   if (statements.length) await client.batch(statements, "write");
-  return statements.length / ids.length;
+  return Math.max(0, Math.ceil((Math.min(to, now) - first) / SLOT_MS));
 }
 
 let backfilled = false;
@@ -192,15 +222,42 @@ const rangeDays: Record<Range, number> = {
   "90d": 91,
 };
 
+async function readCauses(client: Client, since: number) {
+  const by = new Map<string, Causes>();
+  try {
+    const rows = await client.execute({
+      sql: "SELECT slot_start, service, causes FROM oeffigo_slot_cause WHERE slot_start >= ?",
+      args: [since],
+    });
+    for (const row of rows.rows) {
+      try {
+        by.set(
+          `${row.service}:${row.slot_start}`,
+          JSON.parse(String(row.causes)) as Causes,
+        );
+      } catch {
+        // Eine kaputte Zeile heißt: keine Ursache für diesen Abschnitt.
+      }
+    }
+  } catch {
+    // Die Tabelle gibt es erst nach dem ersten Lauf des neuen Collectors.
+  }
+  return by;
+}
+
 export async function readRange(
   client: Client,
   range: Range,
   now: number,
 ): Promise<RangeHistory> {
-  const rows = await client.execute({
-    sql: `SELECT slot_start, service, ${levels.join(", ")} FROM oeffigo_slot WHERE slot_start >= ?`,
-    args: [now - rangeDays[range] * DAY_MS - DAY_MS],
-  });
+  const since = now - rangeDays[range] * DAY_MS - DAY_MS;
+  const [rows, causes] = await Promise.all([
+    client.execute({
+      sql: `SELECT slot_start, service, ${levels.join(", ")} FROM oeffigo_slot WHERE slot_start >= ?`,
+      args: [since],
+    }),
+    readCauses(client, since),
+  ]);
   return buildRange(
     range,
     rows.rows.map((row) => ({
@@ -209,6 +266,7 @@ export async function readRange(
       counts: Object.fromEntries(
         levels.map((l) => [l, Number(row[l] ?? 0)]),
       ) as MinuteCounts,
+      causes: causes.get(`${row.service}:${row.slot_start}`),
     })),
     now,
     ids,

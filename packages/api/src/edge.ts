@@ -17,6 +17,7 @@ import { pageRouter } from "./router/page";
 import { pageComponentRouter } from "./router/pageComponent";
 import { pageSubscriberRouter } from "./router/pageSubscriber";
 import { privateLocationRouter } from "./router/privateLocation";
+import { statusAppNoticeRouter } from "./router/statusAppNotice";
 import { statusPageRouter } from "./router/statusPage";
 import { statusReportRouter } from "./router/statusReport";
 import { statusTranslationRouter } from "./router/statusTranslation";
@@ -32,6 +33,7 @@ export const edgeRouter = createTRPCRouter({
   page: pageRouter,
   pageComponent: pageComponentRouter,
   statusReport: statusReportRouter,
+  statusAppNotice: statusAppNoticeRouter,
   statusTranslation: statusTranslationRouter,
   domain: domainRouter,
   externalService: externalServiceRouter,

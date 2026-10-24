@@ -3,11 +3,15 @@ import { test } from "node:test";
 
 import {
   expireSnapshot,
+  feedComponentStatus,
   headline,
+  isPaused,
   MAX_AGE_MS,
   mergeManualStatus,
+  nativeStatus,
   newerReport,
   projectReport,
+  services,
 } from "./model.ts";
 
 const now = Date.parse("2026-09-09T12:00:00Z");
@@ -121,7 +125,7 @@ test("idle predictions stay neutral and carry the reason instead of an outage", 
     projectReport(raw, "operational", "operational", now, 100).services.find(
       (s) => s.id === "estimates",
     ),
-    { id: "estimates", state: "degraded" },
+    { id: "estimates", state: "degraded", causes: ["report"] },
   );
 });
 test("switched-off predictions read as in development, never as an outage", () => {
@@ -192,7 +196,77 @@ test("a resting component pauses its own function and leaves the map green", () 
   );
   // Stops, search and surroundings are unaffected: green there is the truth.
   assert.equal(state("map"), "operational");
-  assert.equal(headline(snapshot.services), "no_known_issues");
+  assert.equal(
+    headline(snapshot.services.map((x) => ({ ...x, maintenance: false }))),
+    "operational",
+    "a deliberate pause is not an open question",
+  );
+});
+test("paused functions do not colour the overall state, real maintenance does", () => {
+  const raw = report();
+  raw.components = raw.components.map((c) =>
+    c.id === "vehicle_positions" ? { ...c, status: "paused" } : c,
+  );
+  raw.predictionDelivery = { state: "disabled", evidenceSource: "none" };
+  const snapshot = projectReport(raw, "operational", "operational", now, 100);
+  const others = mergeManualStatus(
+    snapshot,
+    services.map((s) => ({
+      type: "component",
+      component: { id: s.componentId, status: "success" },
+    })),
+    now,
+  );
+  const paused = others.services.filter((s) => isPaused(s)).map((s) => s.id);
+  assert.deepEqual(paused, ["positions", "estimates"]);
+  assert.equal(others.overall, "operational");
+  assert.equal(nativeStatus(others.overall), "success");
+  assert.equal(
+    feedComponentStatus(others.services.find((s) => s.id === "positions")),
+    "paused",
+  );
+  assert.equal(
+    feedComponentStatus(others.services.find((s) => s.id === "map")),
+    "operational",
+  );
+  assert.equal(headline(others.services), "operational");
+
+  const maintenance = mergeManualStatus(
+    snapshot,
+    services.map((s) => ({
+      type: "component",
+      component: {
+        id: s.componentId,
+        status: s.id === "map" ? "info" : "success",
+      },
+    })),
+    now,
+  );
+  const map = maintenance.services.find((s) => s.id === "map");
+  assert.equal(map.maintenance, true);
+  assert.equal(feedComponentStatus(map), "under_maintenance");
+  assert.equal(
+    maintenance.overall,
+    "paused",
+    "maintenance still shows as such",
+  );
+  assert.equal(headline(maintenance.services), "maintenance");
+});
+test("an unconfirmed function still stops the headline from reading all clear", () => {
+  const paused = { state: "paused", maintenance: false };
+  const ok = { state: "operational", maintenance: false };
+  assert.equal(headline([ok, paused]), "operational");
+  assert.equal(
+    headline([ok, paused, { state: "unknown", maintenance: false }]),
+    "unconfirmed",
+  );
+  assert.equal(
+    headline([
+      paused,
+      { state: "unknown", maintenance: false, note: "no_demand" },
+    ]),
+    "no_known_issues",
+  );
 });
 test("a confirmed Vienna-only alerts list keeps its scope note through a manual incident", () => {
   const raw = report();
@@ -240,4 +314,117 @@ test("the headline names confirmed problems first and tolerates explained neutra
     ]),
     "down",
   );
+});
+
+test("sources take public names from router and components, and go grey without a fresh report", async () => {
+  const { projectReport } = await import("./model.ts");
+  const now = Date.parse("2026-10-23T09:00:00Z");
+  const report = {
+    generatedAt: new Date(now - 10_000).toISOString(),
+    components: [
+      { id: "wiener_linien", status: "operational" },
+      { id: "disruption_search", status: "degraded" },
+    ],
+    router: [
+      { id: "vao", status: "operational" },
+      { id: "mgate", status: "standby" },
+      { id: "trias", status: "down" },
+    ],
+  };
+  const live = projectReport(report, "operational", "operational", now, 100);
+  assert.deepEqual(
+    Object.fromEntries(live.sources.map((s) => [s.id, s.state])),
+    {
+      vao: "operational",
+      "wiener-linien": "operational",
+      "verbund-linie": "down",
+      mvo: "degraded",
+      oebb: "paused",
+    },
+  );
+  const old = projectReport(
+    report,
+    "operational",
+    "operational",
+    now + 600_000,
+    100,
+  );
+  assert.ok(old.sources.every((s) => s.state === "unknown"));
+});
+
+test("traffic only makes a measured function worse", async () => {
+  const { applyTraffic } = await import("./model.ts");
+  const snapshot = {
+    stale: false,
+    services: [
+      { id: "planning", state: "operational" },
+      { id: "positions", state: "paused" },
+      { id: "map", state: "down" },
+    ],
+  };
+  const out = applyTraffic(snapshot, {
+    planning: { state: "degraded" },
+    positions: { state: "down" },
+    map: { state: "degraded" },
+  });
+  assert.deepEqual(
+    out.services.map((s) => s.state),
+    ["degraded", "paused", "down"],
+  );
+  assert.equal(applyTraffic(snapshot, null), snapshot);
+});
+
+test("missing realtime in one Bundesland narrows departures, not all of Austria", async () => {
+  const { applyRealtimeGaps } = await import("./model.ts");
+  const snapshot = {
+    stale: false,
+    services: [
+      { id: "departures", state: "operational" },
+      { id: "planning", state: "operational" },
+    ],
+    sources: [
+      { id: "verbund-linie", state: "operational" },
+      { id: "vao", state: "operational" },
+    ],
+  };
+  const out = applyRealtimeGaps(snapshot, ["steiermark"]);
+  assert.deepEqual(
+    out.services.map((s) => s.state),
+    ["degraded", "operational"],
+  );
+  assert.deepEqual(out.services[0].realtimeGaps, ["steiermark"]);
+  assert.deepEqual(
+    out.sources,
+    snapshot.sources,
+    "a source is not blamed for an effect",
+  );
+  assert.equal(applyRealtimeGaps(snapshot, []), snapshot);
+});
+
+test("causes name why a function is not green, and only then", async () => {
+  const { applyTraffic, applyRealtimeGaps } = await import("./model.ts");
+  const raw = report();
+  raw.components = raw.components.map((c) =>
+    c.id === "database" ? { ...c, status: "degraded" } : c,
+  );
+  const base = projectReport(raw, "operational", "operational", now, 100);
+  const by = (snap, id) => snap.services.find((s) => s.id === id);
+  assert.deepEqual(by(base, "reliability").causes, ["report"]);
+  assert.equal(by(base, "map").causes, undefined);
+
+  const slow = applyTraffic(base, {
+    planning: { state: "degraded", slow: {} },
+    map: { state: "degraded" },
+    reliability: { state: "degraded", slow: {} },
+  });
+  assert.deepEqual(by(slow, "planning").causes, ["slow"]);
+  assert.deepEqual(by(slow, "map").causes, ["errors"]);
+  assert.deepEqual(by(slow, "reliability").causes, ["report", "slow"]);
+
+  const gaps = applyRealtimeGaps(slow, ["steiermark"]);
+  assert.deepEqual(by(gaps, "departures").causes, ["realtime"]);
+
+  const down = projectReport(report(), "down", "down", now, null);
+  assert.deepEqual(by(down, "map").causes, ["unreachable"]);
+  assert.deepEqual(by(down, "website").causes, ["unreachable"]);
 });

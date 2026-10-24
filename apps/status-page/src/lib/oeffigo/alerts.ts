@@ -12,6 +12,14 @@ export type SignalReading = {
   label: string;
   level: AlertLevel | null;
   detail?: string;
+  /** Vorschlag für eine öffentliche Meldung; veröffentlicht wird nur von Hand. */
+  draft?: string;
+  /**
+   * Prüfungen bis zur Meldung, wenn das Signal schon selbst bestätigt ist
+   * (Verkehr und Echtzeit mit eigener Hysterese, Sentry mit fertigen
+   * Zehn-Minuten-Abschnitten). Ohne Angabe gilt `CONFIRM`.
+   */
+  confirm?: number;
 };
 
 /** `complete` means the report was fresh and valid, so a missing entry is really gone. */
@@ -38,6 +46,7 @@ export type AlertEvent =
       label: string;
       level: AlertLevel;
       detail?: string;
+      draft?: string;
       /** Set when this was the last message before the signal goes quiet. */
       muted?: boolean;
     }
@@ -110,6 +119,8 @@ export function readSignals(input: {
   reportFresh: boolean;
   staleChecks: number;
   report: unknown;
+  /** Signale aus echtem Verkehr und Sentry; sie hängen nicht am Bericht. */
+  extra?: readonly SignalReading[];
 }): SignalSet {
   const apiFailing = input.healthFailures >= FAILED_PROBES;
   const signals: SignalReading[] = [
@@ -134,6 +145,7 @@ export function readSignals(input: {
           : undefined,
     },
   ];
+  signals.push(...(input.extra ?? []));
   // Without a fresh report every entry would be a guess; the report signal covers that.
   if (!input.reportFresh) return { signals, complete: false };
   const parsed = reportSchema.safeParse(input.report);
@@ -172,7 +184,12 @@ export function readSignals(input: {
   return { signals, complete: true };
 }
 
-function checksNeeded(current: AlertLevel | null, next: AlertLevel | null) {
+function checksNeeded(
+  current: AlertLevel | null,
+  next: AlertLevel | null,
+  confirm?: number,
+) {
+  if (confirm !== undefined) return confirm;
   if (next === null)
     return current === "down" ? CONFIRM.down : CONFIRM.recovered;
   return next === "down" ? CONFIRM.down : CONFIRM.degraded;
@@ -217,7 +234,7 @@ export function evaluateAlerts(
     }
     const count =
       known.pending?.level === signal.level ? known.pending.count + 1 : 1;
-    if (count < checksNeeded(known.level, signal.level)) {
+    if (count < checksNeeded(known.level, signal.level, signal.confirm)) {
       next[signal.id] = { ...known, pending: { level: signal.level, count } };
       continue;
     }
@@ -278,9 +295,13 @@ const clock = new Intl.DateTimeFormat("de-AT", {
   timeZone: "Europe/Vienna",
 });
 
-function duration(since: string, now: number) {
+export function duration(since: string, now: number) {
   const minutes = Math.max(1, Math.round((now - Date.parse(since)) / 60_000));
-  return minutes < 90 ? `${minutes} Min.` : `${Math.round(minutes / 60)} Std.`;
+  if (minutes < 60) return `${minutes} Min.`;
+  const rest = minutes % 60;
+  return rest
+    ? `${Math.floor(minutes / 60)} Std. ${rest} Min.`
+    : `${minutes / 60} Std.`;
 }
 
 function escape(text: string) {
@@ -329,15 +350,30 @@ export function formatAlert(
     const icon = down > 0 ? "🔴" : "🟠";
     lines.push(`${icon} ${title}`, "");
     rich.push(`${icon} <b>${escape(title)}</b>`, "");
+    // Die Überschrift nennt die Art schon, solange alle Meldungen dieselbe haben.
+    const mixed = down > 0 && down < problems.length;
     for (const event of problems) {
-      const mark = event.level === "down" ? "Ausfall" : "Eingeschränkt";
-      lines.push(`${mark}: ${event.label} · seit ${clock.format(now)}`);
+      const mark = mixed
+        ? `${event.level === "down" ? "Ausfall" : "Einschränkung"}: `
+        : "";
+      lines.push(`${mark}${event.label} · seit ${clock.format(now)}`);
       rich.push(
-        `${mark}: <b>${escape(event.label)}</b> · seit ${clock.format(now)}`,
+        `${escape(mark)}<b>${escape(event.label)}</b> · seit ${clock.format(now)}`,
       );
       if (event.detail) {
         lines.push(`   ${event.detail}`);
         rich.push(`   ${escape(event.detail)}`);
+      }
+      if (event.draft) {
+        const note = `Entwurf für die Statusseite: ${event.draft}`;
+        lines.push(
+          `   ${note}`,
+          "   https://status-admin.oeffigo.app/status-pages/1/status-reports",
+        );
+        rich.push(
+          `   <i>${escape(note)}</i>`,
+          `   <a href="https://status-admin.oeffigo.app/status-pages/1/status-reports">Meldung anlegen</a>`,
+        );
       }
       if (event.muted) {
         const note = "Meldet sich wiederholt — 24 Std. stumm.";
@@ -388,7 +424,7 @@ export function formatWelcome(memory: AlertMemory, now: number): AlertMessage {
     lines.push("", "Aktuell offen:");
     rich.push("", "<b>Aktuell offen:</b>");
     for (const entry of open) {
-      const line = `${entry.level === "down" ? "🔴 Ausfall" : "🟠 Eingeschränkt"}: ${entry.label} · seit ${duration(entry.since, now)}`;
+      const line = `${entry.level === "down" ? "🔴 Ausfall" : "🟠 Einschränkung"}: ${entry.label} · seit ${duration(entry.since, now)}`;
       lines.push(line);
       rich.push(escape(line));
     }
