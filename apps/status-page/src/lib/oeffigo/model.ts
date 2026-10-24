@@ -90,7 +90,9 @@ export const services = [
     en: "Reliability data",
     description: "Ausgewertete Ankünfte und Abfahrten im Rückblick.",
     descriptionEn: "Recorded arrivals and departures over time.",
-    required: ["api", "database", "official_history"],
+    // `punctuality_index`: Linienseiten und „meist +X" kommen aus dem nächtlich
+    // veröffentlichten Stand; stand er still, blieb die Zeile grün (21.–24.10.).
+    required: ["api", "database", "official_history", "punctuality_index"],
   },
   {
     id: "assistants",

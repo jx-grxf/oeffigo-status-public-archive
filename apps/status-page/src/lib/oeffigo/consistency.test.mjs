@@ -19,6 +19,7 @@ const report = () => ({
     "api_router",
     "database",
     "official_history",
+    "punctuality_index",
     "predictions",
     "disruption_search",
     "vehicle_positions",

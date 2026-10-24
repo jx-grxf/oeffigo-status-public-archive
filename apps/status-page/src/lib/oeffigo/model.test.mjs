@@ -22,6 +22,7 @@ const report = () => ({
     "api_router",
     "database",
     "official_history",
+    "punctuality_index",
     "predictions",
     "disruption_search",
     "vehicle_positions",
@@ -202,6 +203,19 @@ test("a resting component pauses its own function and leaves the map green", () 
     "a deliberate pause is not an open question",
   );
 });
+test("a stalled punctuality publication colours reliability and nothing else", () => {
+  for (const status of ["degraded", "down"]) {
+    const raw = report();
+    raw.components = raw.components.map((c) =>
+      c.id === "punctuality_index" ? { ...c, status } : c,
+    );
+    const snapshot = projectReport(raw, "operational", "operational", now, 100);
+    const state = (id) => snapshot.services.find((s) => s.id === id)?.state;
+    assert.equal(state("reliability"), status);
+    assert.equal(state("departures"), "operational");
+  }
+});
+
 test("paused functions do not colour the overall state, real maintenance does", () => {
   const raw = report();
   raw.components = raw.components.map((c) =>
