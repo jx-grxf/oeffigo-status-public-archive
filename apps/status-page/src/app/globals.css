@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "@openstatus/ui/globals";
+@import "tw-animate-css";
+@plugin "@tailwindcss/typography";
+
+/* safelist */
+@source inline("has-data-[slot=slider-range]:bg-red-500");
+
+@theme {
+  --breakpoint-xs: 30rem;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  /* Override the base radius for status-page */
+  --radius: 0rem;
+}
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  /* NOTE: allows us to --radius: 0px and avoid rounding issues - otherwise it is 'infinite * 1px' */
+  .rounded-full {
+    border-radius: calc(var(--radius) * 99999999);
+  }
+}
+
+/* Report updates are prose for passengers, not machine output. */
+[data-slot="status-event-timeline-message"] {
+  font-family: var(--font-sans);
+}
+
+@keyframes og-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--og-tone) 60%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 0.5rem transparent;
+  }
+}
+
+@keyframes og-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .og-pulse {
+    animation: og-pulse 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  [data-slot="status-bar"] {
+    animation: og-fade 0.5s ease-out backwards;
+  }
+}

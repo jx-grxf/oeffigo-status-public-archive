@@ -1,0 +1,71 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { KeyRound } from "lucide-react";
+import Link from "next/link";
+
+import { NoteButton } from "@/components/common/note";
+import { NoteDismissible } from "@/components/common/note-dismissible";
+import {
+  Section,
+  SectionDescription,
+  SectionGroup,
+  SectionHeader,
+  SectionTitle,
+} from "@/components/content/section";
+import { FormCardGroup } from "@/components/forms/form-card";
+import { useTRPC } from "@/lib/trpc/client";
+
+import { ConnectedAppsCard } from "./connected-apps-card";
+import { SlackIntegrationCard } from "./slack-card";
+
+export default function Page() {
+  const trpc = useTRPC();
+  //  FIXME: we should use workspace limit here
+  const { data: workspace } = useQuery(trpc.workspace.get.queryOptions());
+
+  const { data: integrations } = useQuery(
+    trpc.integrationRouter.list.queryOptions(),
+  );
+
+  if (!integrations) return null;
+
+  const slackIntegration = integrations.find((i) => i.name === "slack-agent");
+
+  return (
+    <SectionGroup>
+      <Section>
+        <SectionHeader>
+          <SectionTitle>Integrations</SectionTitle>
+          <SectionDescription>
+            Connect third-party services to your workspace.
+          </SectionDescription>
+        </SectionHeader>
+        <NoteDismissible cookieKey="note_integrations_api_keys">
+          <KeyRound />
+          Looking for your API keys? They live in the General settings page.
+          <NoteButton variant="default" asChild>
+            <Link href="/settings/general#api-keys">Go API keys</Link>
+          </NoteButton>
+        </NoteDismissible>
+        <FormCardGroup>
+          <SlackIntegrationCard
+            locked={!workspace?.limits["slack-agent"]}
+            integration={
+              slackIntegration
+                ? {
+                    id: slackIntegration.id,
+                    externalId: slackIntegration.externalId,
+                    data: slackIntegration.data as {
+                      teamName?: string;
+                    },
+                  }
+                : null
+            }
+          />
+          <ConnectedAppsCard />
+        </FormCardGroup>
+      </Section>
+    </SectionGroup>
+  );
+}

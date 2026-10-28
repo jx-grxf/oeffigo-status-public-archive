@@ -1,0 +1,88 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["**/.env.*local"],
+  // Vercel disables corepack unless it can confirm turbo >= 2.1.3 or sees this
+  // passthrough; without corepack it falls back to pnpm 9, which can't read
+  // `overrides` from pnpm-workspace.yaml and fails the frozen install.
+  "globalPassThroughEnv": ["COREPACK_HOME"],
+  "tasks": {
+    "registry:build": {
+      "outputs": ["public/r/**"]
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "env": [
+        "\\*",
+        "RESEND_API_KEY",
+        // Framework inference pulls every NEXT_PUBLIC_* into the hash of any
+        // package that depends on next; these Vercel system vars change on every
+        // deploy, so without the negations nothing ever cache-hits.
+        "!NEXT_PUBLIC_VERCEL_GIT_*",
+        "!NEXT_PUBLIC_VERCEL_URL",
+        "!NEXT_PUBLIC_VERCEL_BRANCH_URL",
+        "!NEXT_PUBLIC_VERCEL_DEPLOYMENT_ID",
+        "DATABASE_URL",
+        "DATABASE_AUTH_TOKEN",
+        "TINY_BIRD_API_KEY",
+        "NODE_ENV",
+        "BLOB_READ_WRITE_TOKEN",
+        "TEAM_ID_VERCEL",
+        "PROJECT_ID_VERCEL",
+        "STRIPE_SECRET_KEY",
+        "UNKEY_TOKEN",
+        "UNKEY_API_ID",
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN",
+        "OPENPANEL_CLIENT_SECRET",
+        "NEXT_PUBLIC_OPENPANEL_CLIENT_ID",
+        "AUTH_SECRET",
+        "CRON_SECRET",
+        "SELF_HOST"
+      ],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "lint": {},
+    "check": {},
+    "dev": {
+      "cache": false
+    },
+    "@openstatus/web#dev": {
+      "cache": false,
+      "dependsOn": ["@openstatus/react#build"]
+    },
+    "@openstatus/status-page#dev": {
+      "cache": false
+    },
+    "@openstatus/dashboard#dev": {
+      "cache": false
+    },
+    "test": {
+      "cache": false,
+      // Strict env mode would drop these, and packages/db then silently falls
+      // back to the default local sqld URL — pointing tests at whatever
+      // database happens to be on port 8080.
+      "env": [
+        "DATABASE_URL",
+        "DATABASE_AUTH_TOKEN",
+        "NODE_ENV",
+        "RESEND_API_KEY",
+        "CRON_SECRET"
+      ]
+    },
+    "dx": {
+      "cache": false,
+      "dependsOn": ["seed"]
+    },
+    "seed": {
+      "cache": false,
+      "dependsOn": ["migrate"]
+    },
+    "migrate": {
+      "cache": false,
+      "dependsOn": ["env"]
+    },
+    "env": {
+      "cache": true
+    }
+  }
+}

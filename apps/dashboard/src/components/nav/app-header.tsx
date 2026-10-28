@@ -1,0 +1,43 @@
+import { cn } from "@/lib/utils";
+
+export function AppHeader({
+  children,
+  className,
+  ...props
+}: React.ComponentProps<"header">) {
+  return (
+    <header
+      className={cn(
+        "bg-background h-app-header sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b px-2.5",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+    </header>
+  );
+}
+
+export function AppHeaderContent({
+  children,
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div className={cn("flex flex-1 items-center gap-2", className)} {...props}>
+      {children}
+    </div>
+  );
+}
+
+export function AppHeaderActions({
+  children,
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div className={cn("ml-auto", className)} {...props}>
+      {children}
+    </div>
+  );
+}

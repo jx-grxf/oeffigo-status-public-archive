@@ -1,0 +1,27 @@
+{
+  "name": "@openstatus/notification-pagerduty",
+  "version": "0.0.0",
+  "main": "src/index.ts",
+  "scripts": {
+    "check": "deno check --sloppy-imports .",
+    "test": "deno test --parallel -A --no-check --sloppy-imports",
+    "tsc": "tsc"
+  },
+  "dependencies": {
+    "@openstatus/db": "workspace:*",
+    "@openstatus/notification-base": "workspace:*",
+    "@t3-oss/env-core": "catalog:",
+    "@types/validator": "catalog:",
+    "validator": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@openstatus/tsconfig": "workspace:*",
+    "@std/expect": "jsr:^1.0.19",
+    "@std/testing": "jsr:^1.0.19",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}

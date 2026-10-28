@@ -1,0 +1,35 @@
+import { appRouter, createTRPCContext } from "@openstatus/api";
+import { createTRPCOnError } from "@openstatus/api/src/trpc-errors";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import type { NextRequest } from "next/server";
+
+import { auth } from "@/lib/auth";
+import { opsSession } from "@/lib/auth/ops-token";
+import { guardTRPCSource } from "@/lib/trpc/shared";
+
+// Runs on the Node.js runtime (Vercel Fluid compute). The whole tRPC surface
+// is served here — several routers pull Node-only deps (@slack/web-api, email
+// and notification SDKs) that are not Edge-safe.
+
+const handler = (req: NextRequest) => {
+  const blocked = guardTRPCSource(req);
+  if (blocked) return blocked;
+
+  return fetchRequestHandler({
+    endpoint: "/api/trpc/lambda",
+    router: appRouter,
+    req: req,
+    // Operations tooling signs in with a token instead of a browser session.
+    createContext: async () => {
+      const ops = await opsSession(req);
+      return createTRPCContext({
+        req,
+        auth: ops ? async () => ops : auth,
+        service: ops ? { job: "ops" } : null,
+      });
+    },
+    onError: createTRPCOnError("lambda"),
+  });
+};
+
+export { handler as GET, handler as POST };
