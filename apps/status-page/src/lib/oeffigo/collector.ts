@@ -42,12 +42,19 @@ function database() {
     authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
   });
 }
+// Without the token the API answers only id, name and status per component; router,
+// sources and prediction delivery come with `?detail=1` and HEALTH_TOKEN (2026-10-28).
 async function readReport() {
+  const token = process.env.OEFFIGO_HEALTH_TOKEN ?? "";
+  if (!token) {
+    console.error("OEFFIGO_HEALTH_TOKEN missing; the ÖffiGo report cannot be read");
+    return null;
+  }
   try {
-    const response = await fetch("https://api.oeffigo.app/v1/status", {
+    const response = await fetch("https://api.oeffigo.app/v1/status?detail=1", {
       cache: "no-store",
       signal: AbortSignal.timeout(8000),
-      headers: { "User-Agent": "OeffiGo-Status/1.0" },
+      headers: { "User-Agent": "OeffiGo-Status/1.0", "x-health-token": token },
     });
     if (!response.ok) return null;
     const text = await response.text();
